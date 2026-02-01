@@ -9,7 +9,7 @@
       <br>
       Princeton AI for Accelerating Invention Lab
       <br>
-      Authors: Aiden Yiliu Li, Xinyue Hao, Shilong Liu, Mengdi Wang
+      Authors: [Aiden Yiliu Li](https://yiliu.li), [Xinyue Hao](https://www.edinburgh-robotics.org/students/maggie-xinyue-hao), [Shilong Liu](https://lsl.zone), [Mengdi Wang](https://ece.princeton.edu/people/mengdi-wang)
     </td>
   </tr>
 </table>
@@ -17,10 +17,6 @@
 ## Abstract
 
 Avenir-Web is an autonomous web agent framework designed for reliable execution of long-horizon tasks on complex, dynamic web interfaces. Addressing challenges in element grounding and long-term task tracking, it introduces a modular architecture combining Mixture of Grounding Experts (MoGE), Experience-Imitation Planning (EIP), and Adaptive Memory with Task-Tracking Checklists. This approach establishes a new open-source state-of-the-art on the Online-Mind2Web benchmark, bridging the performance gap with proprietary models in real-world deployments.
-
-- **Robust Grounding**: Leverages Mixture of Grounding Experts (MoGE) for precise interaction with complex DOM structures.
-- **Procedural Planning**: Incorporates Experience-Imitation Planning (EIP) to utilize site-specific procedural priors.
-- **Long-term Coherence**: Maintains context via Task-Tracking Checklists and Adaptive Memory mechanisms.
 
 ## Installation
 
@@ -107,8 +103,8 @@ This repository is provided for research use. Model outputs may be incorrect, in
 
 ## Contact
 
-- Aiden Yiliu Li: yiliu.li, yiliu.li@outlook.com
-- Shilong Liu: https://lsl.zone, slongliu86@gmail.com
+- Aiden Yiliu Li: yiliu.li@outlook.com
+- Shilong Liu: slongliu86@gmail.com
 
 ## License
 

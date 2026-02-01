@@ -4,6 +4,8 @@
 *.log
 *.jpg
 *.png
+!img/*.png
+
 
 __pycache__/
 online_results/*
