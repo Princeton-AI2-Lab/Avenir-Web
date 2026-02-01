@@ -1,13 +1,11 @@
-<img src="img/icon.png" align="left" width="140" style="margin-right: 20px; margin-bottom: 30px;">
+<img src="img/icon.png" align="right" width="140">
 
-<h1 style="border-bottom: none; margin-bottom: 5px; padding-bottom: 0;">Avenir-Web</h1>
+<h1 style="border-bottom: none;">Avenir-Web</h1>
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE.txt)
 
 Princeton AI for Accelerating Invention Lab  
 Authors: [Aiden Yiliu Li](https://yiliu.li), [Xinyue Hao](https://www.edinburgh-robotics.org/students/maggie-xinyue-hao), [Shilong Liu](https://lsl.zone), [Mengdi Wang](https://ece.princeton.edu/people/mengdi-wang)
-
-<br clear="left"/>
 
 ## Abstract
 
