@@ -1,0 +1,12 @@
+[
+  {
+    "task_id": "example_task_001",
+    "confirmed_task": "Find me distillable models that supports image input, price from low to high.",
+    "website": "https://openrouter.ai/"
+  },
+  {
+    "task_id": "example_task_002",
+    "confirmed_task": "Shop for vegan pizza priced $10–$15. Add one item to cart.",
+    "website": "https://www.target.com/"
+  }
+]

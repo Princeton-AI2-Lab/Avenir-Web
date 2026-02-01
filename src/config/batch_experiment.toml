@@ -1,0 +1,37 @@
+[basic]
+save_file_dir = "../eval_example" # Directory to save the results of the program's operations.
+
+# Global model configuration
+[model]
+name = "openrouter/google/gemini-3-pro-preview" # Model name to use for inference
+temperature = 0.0 # Temperature setting for model responses, controlling randomness
+
+# Lightweight model for checklist operations (runs in background, non-blocking)
+# Using a smaller VL model (8B) makes checklist updates much faster
+checklist_model = "openrouter/qwen/qwen3-vl-8b-instruct" # Lightweight vision-language model for checklist generation/updates
+
+# Strategist model for task planning (runs once at task start)
+# Use advanced strategist model with online search via OpenRouter
+strategist_model = "openrouter/anthropic/claude-sonnet-4.5" 
+strategist_temperature = 1.0 # Temperature for strategist model
+strategist_enable_online = true
+
+# API Keys configuration
+[api_keys]
+# Set your OpenRouter API key here or use OPENROUTER_API_KEY environment variable
+# Priority: environment variables > config file values
+openrouter_api_key = "Your API key here"
+
+[experiment]
+task_file_path = "../data/example.json" # Path to the JSON file with tasks.
+overwrite = false # Enable to overwrite existing results. Disable to skip tasks already saved in save_file_dir.
+max_op = 30 # Maximum number of operations to attempt.
+rate_limit = -1 # Rate limit for API calls (-1 for no limit)
+highlight = false # If true, highlights elements during processing. Included in screenshots.
+
+[playwright]
+headless = true # Set to false to show browser window, true to run in background
+geolocation.longitude=-74.66 # Longitude for geolocation.
+geolocation.latitude=40.34 # Latitude for geolocation.
+viewport.width = 1400 # Browser window width.
+viewport.height = 1400 # Browser window height.
