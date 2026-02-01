@@ -1,6 +1,4 @@
-<img src="img/icon.png" align="right" width="140">
-
-<h1 style="border-bottom: none;">Avenir-Web</h1>
+# Avenir-Web <img src="img/icon.png" align="right" width="140">
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE.txt)
 
