@@ -506,6 +506,7 @@ def build_system_prompt(task: str, previous_actions: str, checklist_context: str
             "Close/accept blocking modals, overlays, cookie banners first.",
             "Do not repeat actions unless page state visibly changed.",
             "When objectives are achieved, use action=TERMINATE and status=success.",
+            "Do not assume or invent facts, entities, identifiers, or user intent; select a specific instance only when it is explicitly visible or verifiably referenced on the current page.",
         ]
     else:
         system_lines = [
@@ -518,6 +519,7 @@ def build_system_prompt(task: str, previous_actions: str, checklist_context: str
             "SCROLL: omit coordinates to scroll page; include [x,y] to scroll a container.",
             "If you see potential <select> elements, MUST use 'select' action directly. DO NOT use 'click' to open dropdowns.",
             "When objectives are achieved, TERMINATE with status 'success'.",
+            "Do not assume or invent facts, entities, identifiers, or user intent; select a specific instance only when it is explicitly visible or verifiably referenced on the current page.",
         ]
     if use_structured_output:
         system_text = "\n".join(system_lines) + ("\n" + strategic_block if strategic_block else "") + "\nReturn ONLY a single JSON object."
@@ -553,6 +555,7 @@ Requirements:
 - Use the website’s visible labels in quotes where relevant (links, buttons, tabs, fields)
 - Do not include generic predictions or redundant phrasing (e.g., "scroll down to see ..."); only state the action
 - Ground suggestions in verifiable online information about the target website; if none found, provide at most 0–2 minimal actions or leave the plan empty
+- Do not assume or invent facts, entities, identifiers, or user intent; never select a specific instance (e.g., person, organization, product, symbol, ID, date, number) unless it is explicitly visible on the current page or verifiably referenced by a source you just opened
 - Do not use coordinates, CSS selectors, element IDs, or numbered step sequences
 - No rationale; only the action sentences
 
@@ -571,6 +574,7 @@ Provide 2–4 site‑specific action sentences the agent should attempt next.
 - Prefer visible labels in quotes (e.g., "Search", "Publications", "Downloads")
 - Use concrete actions (scroll/top/bottom, click, open, search, filter) without commentary about expected results
 - Ground actions in online sources about this site (docs/help/blog/community); do not invent labels
+- Do not assume or invent facts, entities, identifiers, or user intent; if a specific instance is needed but not yet evidenced on the current page, add an explicit evidence‑gathering step first (e.g., open help/docs/search) rather than guessing
 - If no valid online‑sourced guidance is found, return 0–2 minimal actions or leave <plan> empty
 Return ONLY <plan>...</plan>; any other content will be ignored."""
 
@@ -589,6 +593,7 @@ Requirements:
 - Use visible labels in quotes; include navigation actions as needed (scroll/top/bottom, click links/tabs/buttons, open search, filter) without redundant commentary
 - Do not include generic predictions (e.g., "scroll down to see ..."); only specify actions
 - Ground suggestions in verifiable online sources about the target website; if none found, provide at most 0–2 minimal actions or leave the plan empty
+- Do not assume or invent facts, entities, identifiers, or user intent; never select a specific instance (e.g., person, organization, product, symbol, ID, date, number) unless it is explicitly visible on the current page or verifiably referenced by a source you just opened
 - No coordinates/selectors/IDs; avoid repeating previously failed labels
 - Prefer alternative entry points when a label repeatedly fails
 
