@@ -102,8 +102,10 @@ class StepExecutor:
         )
         try:
             try:
+                # Perform page-state change checks for TYPE/SELECT/PRESS ENTER (skip for CLICK and others)
+                do_capture = pred_action in ("TYPE", "SELECT", "PRESS ENTER")
                 agent._pending_hit_test_coords = None
-                if pred_action == "CLICK" and isinstance(pred_coordinate, (list, tuple)) and len(pred_coordinate) >= 2:
+                if do_capture and isinstance(pred_coordinate, (list, tuple)) and len(pred_coordinate) >= 2:
                     cx, cy = pred_coordinate[0], pred_coordinate[1]
                     if pred_coordinate_type == "normalized":
                         px, py = coordinate_utils.map_normalized_to_pixels(cx, cy, agent.page, agent.config)
@@ -114,9 +116,9 @@ class StepExecutor:
                 agent._pending_hit_test_coords = None
 
             try:
-                state_before = await agent._capture_page_state()
+                state_before = await agent._capture_page_state() if do_capture else None
             except Exception:
-                state_before = {"error": "capture_failed_before"}
+                state_before = {"error": "capture_failed_before"} if do_capture else None
 
             agent._current_coordinates_type = pred_coordinate_type
             new_action = await agent.perform_action(
@@ -138,11 +140,12 @@ class StepExecutor:
             if pred_action == "TERMINATE":
                 agent.complete_flag = True
 
-            await asyncio.sleep(1)
+            if do_capture:
+                await asyncio.sleep(1)
             try:
-                state_after = await agent._capture_page_state()
+                state_after = await agent._capture_page_state() if do_capture else None
             except Exception:
-                state_after = {"error": "capture_failed_after"}
+                state_after = {"error": "capture_failed_after"} if do_capture else None
 
             try:
                 new_action = text_utils.compose_action_description(
@@ -157,7 +160,10 @@ class StepExecutor:
 
             try:
                 agent._last_changes_detected = []
-                action_success = await agent._detect_page_state_change(state_before, state_after, pred_action)
+                if do_capture:
+                    action_success = await agent._detect_page_state_change(state_before, state_after, pred_action)
+                else:
+                    action_success = True
             except Exception:
                 action_success = True
 
@@ -179,7 +185,7 @@ class StepExecutor:
                 "success": action_success,
                 "error": None,
                 "page_content_summary": "Page content summary unavailable",
-                "changes_detected": getattr(agent, "_last_changes_detected", None),
+                "changes_detected": getattr(agent, "_last_changes_detected", None) if do_capture else None,
             }
 
             agent.taken_actions.append(enhanced_action)

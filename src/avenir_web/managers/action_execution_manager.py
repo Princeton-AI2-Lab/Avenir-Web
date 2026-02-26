@@ -41,7 +41,7 @@ class ActionExecutionManager:
     async def perform_action(self, page, action_name, value=None, target_element=None, 
                            target_coordinates=None, selector=None, field_name=None, 
                            tasks=None, element_repr=None, session_control=None,
-                           screenshot_path=None):
+                           screenshot_path=None, *, clear_first: bool = True, press_enter_after: bool = False):
         """Perform action with hybrid grounding - unified approach regardless of grounding type."""
         
         element_info = element_repr or (target_element.get('description') if target_element else None)
@@ -68,7 +68,7 @@ class ActionExecutionManager:
             return await self._perform_hover(target_coordinates, target_element, selector, element_repr, page)
             
         elif action_name == "TYPE":
-            return await self._perform_type(target_coordinates, value, field_name, tasks, page)
+            return await self._perform_type(target_coordinates, value, field_name, tasks, page, clear_first=clear_first, press_enter_after=press_enter_after)
             
         elif action_name == "SCROLL UP" or action_name == "SCROLL DOWN":
             return await self._perform_scroll(action_name, target_coordinates, page)
@@ -199,43 +199,6 @@ class ActionExecutionManager:
                 return f"Clicked element found by text: {element_repr}"
         
         return "FAILED: No coordinates or element for CLICK"
-
-    async def _perform_type(self, target_coordinates, value, field_name, tasks, page):
-        field_name = field_name or 'unknown'
-        self.logger.info(f"🎯 [TYPE] Starting | Field: '{field_name}' | Value: '{value}'")
-        
-        # 1. Coordinate click to focus
-        focused = False
-        if target_coordinates:
-             try:
-                 if isinstance(target_coordinates, dict):
-                    cx, cy = target_coordinates["x"], target_coordinates["y"]
-                 else:
-                    cx, cy = target_coordinates[0], target_coordinates[1]
-                 
-                 sx, sy = self.coordinate_utils.map_normalized_to_pixels(cx, cy, page, self.config)
-                 delay = random.randint(50, 150)
-                 self.logger.info(f"🖱️ [TYPE] Clicking coordinates ({sx}, {sy}) to focus")
-                 await page.mouse.click(sx, sy, delay=delay)
-                 focused = True
-             except Exception as e:
-                 self.logger.warning(f"Failed to focus via coordinates: {e}")
-        
-        # 2. If not focused via coords, use LLM to choose field
-        if not focused:
-             elements = await self._extract_typeable_elements(page)
-             chosen = await self._choose_field_with_llm(elements, "TYPE", value, tasks[-1] if tasks else "")
-             if chosen:
-                 center = chosen.get('center')
-                 if center:
-                     self.logger.info(f"🖱️ [TYPE] Clicking chosen element at ({center['x']}, {center['y']})")
-                     await page.mouse.click(center['x'], center['y'])
-        
-        # 3. Type
-        await self._clear_active_field(page)
-        await page.keyboard.type(value)
-        self.logger.info(f"Typed '{value}'")
-        return f"Typed '{value}'"
 
     async def _perform_hover(self, target_coordinates, target_element, selector, element_repr, page):
         if target_coordinates:
@@ -477,6 +440,46 @@ class ActionExecutionManager:
             try: await page.keyboard.press("Backspace")
             except: pass
         except: pass
+
+    async def _perform_type(self, target_coordinates, value, field_name, tasks, page, *, clear_first: bool = True, press_enter_after: bool = False):
+        try:
+            # 1. Click to focus
+            if target_coordinates:
+                try:
+                    if isinstance(target_coordinates, dict):
+                        cx, cy = target_coordinates.get("x"), target_coordinates.get("y")
+                    else:
+                        cx, cy = target_coordinates[0], target_coordinates[1]
+                    
+                    if cx is not None and cy is not None:
+                        sx, sy = self.coordinate_utils.map_normalized_to_pixels(cx, cy, page, self.config)
+                        delay = random.randint(50, 150)
+                        self.logger.info(f"🖱️ [TYPE] Clicking coordinates ({sx}, {sy}) to focus")
+                        await page.mouse.click(sx, sy, delay=delay)
+                except Exception as e:
+                    self.logger.warning(f"Failed to focus via coordinates: {e}")
+
+            # 2. Clear active field if requested
+            if clear_first:
+                await self._clear_active_field(page)
+
+            # 3. Type the value
+            await page.keyboard.type(value or "")
+            self.logger.info(f"Typed '{value}'")
+
+            # 4. Optionally press Enter
+            if press_enter_after:
+                try:
+                    await page.keyboard.press("Enter")
+                    self.logger.info("Pressed Enter after typing")
+                    return f"Typed '{value}' and pressed Enter"
+                except Exception as e:
+                    self.logger.warning(f"Failed to press Enter after typing: {e}")
+            
+            return f"Typed '{value}'"
+        except Exception as e:
+            self.logger.error(f"TYPE failed: {e}")
+            return f"FAILED: TYPE - {e}"
 
     async def _choose_field_with_llm(self, elements, action_type, intended_value, task):
         if not elements: return None

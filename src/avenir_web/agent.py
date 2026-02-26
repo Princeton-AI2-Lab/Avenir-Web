@@ -1339,7 +1339,9 @@ class AvenirWebAgent:
             tasks=self.tasks,
             element_repr=element_repr,
             session_control=self.session_control,
-            screenshot_path=self.screenshot_path
+            screenshot_path=self.screenshot_path,
+            clear_first=clear_first,
+            press_enter_after=press_enter_after
         )
         await self._update_demo_overlay(status="ANALYZING RESULT...")
         return result
