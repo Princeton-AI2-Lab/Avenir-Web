@@ -116,7 +116,7 @@ async def normal_new_context_async(
 
 
 
-def saveconfig(config, save_file):
+def saveconfig(config, save_file, _open=open):
     """
     config is a dictionary.
     save_path: saving path include file name.
@@ -126,7 +126,7 @@ def saveconfig(config, save_file):
     if isinstance(save_file, str):
         save_file = Path(save_file)
     if isinstance(config, dict):
-        with open(save_file, 'w') as f:
+        with _open(save_file, 'w') as f:
             import copy
             config_without_key = copy.deepcopy(config)
             if "api_keys" in config_without_key and "openrouter_api_key" in config_without_key["api_keys"]:

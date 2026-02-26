@@ -175,6 +175,15 @@ class PageEventHandlers:
         agent = self.agent
         await page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
         await page.add_init_script(_build_anti_close_init_script())
+        try:
+            mode = agent.config.get("browser", {}).get("mode")
+        except Exception:
+            mode = None
+        if mode == "demo":
+            try:
+                await page.add_init_script(agent._build_cursor_init_script())
+            except Exception:
+                pass
         page.on("framenavigated", self.on_navigation)
         page.on("close", self.on_close)
         page.on("crash", self.on_crash)

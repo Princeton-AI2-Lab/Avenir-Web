@@ -176,16 +176,27 @@ async def run_single_task(config, task_dict):
         if not is_blank_or_placeholder_api_key(gemini_key):
             os.environ['GEMINI_API_KEY'] = gemini_key
 
+    # Determine mode (headless/headed/demo) with backward compatibility
+    mode = config.get('playwright', {}).get('mode', config.get('browser', {}).get('mode'))
+    if not mode:
+        headless = config.get('playwright', {}).get('headless', config.get('browser', {}).get('headless', True))
+        mode = 'headless' if headless else 'headed'
+
     # Extract configuration for the agent
     # Note: save_file_dir should be the base directory; the agent will create a task_id subdirectory
+    save_file_dir = config['basic']['save_file_dir']
+    if not os.path.isabs(save_file_dir):
+        # Resolve relative to script directory to ensure consistent location
+        save_file_dir = os.path.join(script_dir, save_file_dir)
+        
     agent_config = {
         'task_id': task_dict['task_id'],
         'default_task': task_dict['confirmed_task'],
         'default_website': task_dict['website'],
-        'save_file_dir': config['basic']['save_file_dir'],
+        'save_file_dir': save_file_dir,
         'max_auto_op': config.get('experiment', {}).get('max_op', 30),
         'highlight': config.get('experiment', {}).get('highlight', config.get('agent', {}).get('highlight', False)),
-        'headless': config.get('playwright', {}).get('headless', config.get('browser', {}).get('headless', True)),
+        'mode': mode,
         'viewport': config.get('playwright', {}).get('viewport', config.get('browser', {}).get('viewport', {'width': 1200, 'height': 1080})),
         'model': model_name,
         'temperature': temperature,
@@ -568,8 +579,19 @@ async def main():
     # Load configuration
     script_dir = os.path.dirname(os.path.abspath(__file__))
     config_path = args.config_path
-    if not os.path.isabs(config_path):
-        config_path = os.path.join(script_dir, config_path)
+    
+    # Robust path resolution:
+    # 1. Try absolute path or relative to CWD
+    if os.path.exists(config_path):
+        config_path = os.path.abspath(config_path)
+    # 2. Try relative to script directory
+    elif not os.path.isabs(config_path):
+        script_relative_path = os.path.join(script_dir, config_path)
+        if os.path.exists(script_relative_path):
+            config_path = script_relative_path
+        else:
+            # Fallback to script dir relative (will fail with helpful error)
+            config_path = os.path.join(script_dir, config_path)
     
     try:
         with open(config_path, 'r') as toml_config_file:

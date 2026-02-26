@@ -1,0 +1,22 @@
+[
+  {
+    "task_id": "gmaps_task_001",
+    "confirmed_task": "Find a restaurant nearby Covent Garden that is rated at least 4.6 with a ££ price level that is currently open, then enter Street View",
+    "website": "https://www.google.com/maps/"
+  },
+  {
+    "task_id": "github_task_001",
+    "confirmed_task": "In the GitHub tensorflow repository, browse the latest stable release source code, open one example source file of tensorflow lite for python, view its blame page, and then open the most recent commit that modified that file.",
+    "website": "https://github.com/"
+  },
+  {
+    "task_id": "amazon_task_001",
+    "confirmed_task": "Find a Bluetooth wireless mouse priced under £10 with a rating of at least 4.4, and also find a mouse pad in a different colour. Add both items to the basket. Make sure both have free delivery.",
+    "website": "https://www.amazon.co.uk/"
+  },
+  {
+    "task_id": "yahoo_finance_task_001",
+    "confirmed_task": "Find a U.S. stock with a market capitalization above $100B and a positive price change today, display its chart in Candle view, and set the time range to 1Y.",
+    "website": "https://finance.yahoo.com/"
+  }
+]

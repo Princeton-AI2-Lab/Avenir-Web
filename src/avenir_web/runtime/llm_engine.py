@@ -64,11 +64,50 @@ def describe_api_key_state(value):
         return "placeholder"
     return f"present(len={len(trimmed)})"
 
+def _sanitize_messages(messages):
+    """Remove large base64 strings from messages for logging"""
+    if not isinstance(messages, list):
+        return messages
+    
+    sanitized = []
+    try:
+        for msg in messages:
+            if not isinstance(msg, dict):
+                sanitized.append(msg)
+                continue
+                
+            new_msg = msg.copy()
+            if 'content' in new_msg and isinstance(new_msg['content'], list):
+                new_content = []
+                for item in new_msg['content']:
+                    if isinstance(item, dict) and item.get('type') == 'image_url':
+                        # Truncate base64
+                        url = item.get('image_url', {}).get('url', '')
+                        if url and url.startswith('data:image') and len(url) > 200:
+                            new_item = item.copy()
+                            new_item['image_url'] = item['image_url'].copy()
+                            new_item['image_url']['url'] = '<base64_image_truncated>'
+                            new_content.append(new_item)
+                        else:
+                            new_content.append(item)
+                    else:
+                        new_content.append(item)
+                new_msg['content'] = new_content
+            sanitized.append(new_msg)
+        return sanitized
+    except Exception:
+        return messages  # Fallback to original if sanitization fails
+
 def add_llm_io_record(record):
     try:
         import datetime
         r = dict(record)
         r.setdefault("timestamp", datetime.datetime.now().isoformat())
+        
+        # Sanitize messages to avoid saving huge base64 strings
+        if 'messages' in r:
+            r['messages'] = _sanitize_messages(r['messages'])
+            
         LLM_IO_RECORDS.append(r)
     except Exception:
         pass
@@ -281,5 +320,9 @@ class RouterEngine(Engine):
             return output_text
             
         except Exception as e:
-            logger.error(f"Error in OpenRouter API call: {str(e)}")
+            # Truncate error message to avoid flooding logs with base64 data
+            error_msg = str(e)
+            if len(error_msg) > 2000:
+                error_msg = error_msg[:2000] + "... (truncated)"
+            logger.error(f"Error in OpenRouter API call: {error_msg}")
             raise

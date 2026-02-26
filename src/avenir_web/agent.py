@@ -22,6 +22,9 @@ import logging
 import os
 import random
 import time
+import multiprocessing
+import queue
+from avenir_web.utils.dashboard_gui import AvenirDashboardProcess
 from datetime import datetime
 
 import toml
@@ -56,7 +59,7 @@ class AvenirWebAgent:
                  crawler_mode=False,
                  max_auto_op=30,
                  highlight=False,
-                 headless=False,
+                 mode=None,  # Changed from "headless" to None
                  args=[],
                  browser_app="chrome",
                  viewport={
@@ -85,6 +88,16 @@ class AvenirWebAgent:
                 config["agent"]["highlight"] = highlight
                 config["model"]["name"] = model
                 config["model"]["temperature"] = temperature
+                
+                # Ensure browser section exists and set mode
+                config.setdefault("browser", {})
+                if mode:
+                    config["browser"]["mode"] = mode
+                if viewport:
+                    config["browser"]["viewport"] = viewport
+                if user_agent:
+                    config["browser"]["user_agent"] = user_agent
+                    
             elif config_path is not None:
                 with open(config_path,
                           'r') as config_file:
@@ -107,16 +120,25 @@ class AvenirWebAgent:
                         "temperature": temperature
                     }
                 }
-            config.update({
-                "browser": {
-                    "headless": headless,
-                    "args": args,
-                    "browser_app": browser_app,
-                    "viewport": viewport,
-                    # Simple anti-detection settings
-                    "user_agent": user_agent
-                }
-            })
+            
+            # Ensure browser section exists
+            config.setdefault("browser", {})
+            
+            # Update browser settings from arguments if provided
+            if mode:
+                config["browser"]["mode"] = mode
+            if args:
+                config["browser"]["args"] = args
+            if browser_app:
+                config["browser"]["browser_app"] = browser_app
+            if viewport:
+                config["browser"]["viewport"] = viewport
+            if user_agent:
+                config["browser"]["user_agent"] = user_agent
+
+            # Set default mode if not present
+            if "mode" not in config["browser"]:
+                config["browser"]["mode"] = "headless"
 
         except FileNotFoundError:
             logging.getLogger(__name__).error(f"Config file not found: {os.path.abspath(config_path)}")
@@ -291,6 +313,12 @@ class AvenirWebAgent:
         self.is_stopping = False
         from avenir_web.utils.browser.page_event_handlers import PageEventHandlers
         self.page_event_handlers = PageEventHandlers(self)
+        self.dashboard_process = None
+        self.dashboard_queue = None
+        self.dashboard_command_queue = None
+        self.skip_task = False
+        self.terminated = False
+        self.last_action_display = "Waiting..."
 
     async def _generate_task_strategy(self):
         """
@@ -313,6 +341,14 @@ class AvenirWebAgent:
         self.logger.info(f"Task: {current_task}")
         self.logger.info(f"Website: {current_website}")
         self.logger.info(f"Strategist Model: {strategist_model}")
+
+        # Update overlay early to show "Generating..."
+        if self.config.get('browser', {}).get('mode') == 'demo':
+             # Need to ensure we have a page to inject into if possible, or wait
+             try:
+                 await self._update_demo_overlay(status="STRATEGIZING")
+             except Exception:
+                 pass
         
         # Build soft constraints for strategy
         try:
@@ -406,23 +442,782 @@ class AvenirWebAgent:
                 f.write(action + '\n')
         self.logger.info(f"Action history saved to: {history_path}")
 
+    def _get_pixel_coordinates(self, coords, coord_type=None):
+        """Helper to convert any coordinate format to pixel [x, y]"""
+        if not coords or not isinstance(coords, (list, tuple, dict)):
+            return None
+        
+        try:
+            if isinstance(coords, dict):
+                x, y = float(coords.get('x', 0)), float(coords.get('y', 0))
+            else:
+                x, y = float(coords[0]), float(coords[1])
+            
+            if coord_type is None:
+                coord_type = getattr(self, "_current_coordinates_type", "normalized")
+                
+            if coord_type == "normalized":
+                # Handle both 0-1 and 0-1000 scales
+                if abs(x) <= 1.5 and abs(y) <= 1.5:
+                    vw, vh = coordinate_utils.get_viewport(getattr(self, 'page', None), self.config)
+                    px = int(max(0, min(vw - 1, x * vw)))
+                    py = int(max(0, min(vh - 1, y * vh)))
+                    return [px, py]
+                else:
+                    from avenir_web.utils.browser import coordinate_utils
+                    return list(coordinate_utils.map_normalized_to_pixels(x, y, getattr(self, 'page', None), self.config))
+            else:
+                # Assume pixels, but still clamp/normalize via utility
+                from avenir_web.utils.browser import coordinate_utils
+                return list(coordinate_utils.normalize_coords(x, y, getattr(self, 'page', None), self.config))
+        except Exception:
+            try:
+                if isinstance(coords, dict):
+                    return [int(coords.get('x', 0)), int(coords.get('y', 0))]
+                return [int(coords[0]), int(coords[1])]
+            except Exception:
+                return None
+
+    async def _update_demo_overlay(self, current_prediction=None, status=None):
+        """
+        Updates the demo mode overlay with current agent state.
+        Args:
+            current_prediction: Optional dict containing current reasoning and tool info
+            status: Optional string describing current high-level status (e.g., THINKING, EXECUTING)
+        """
+        if self.config.get('browser', {}).get('mode') != 'demo':
+            return
+
+        if not getattr(self, 'page', None):
+            return
+
+        try:
+            # Gather data
+            strategy = getattr(self, 'task_strategy', 'Generating...')
+            current_task = self.tasks[-1] if self.tasks else "No task"
+            try:
+                url = self.page.url
+            except Exception:
+                url = "Unknown"
+            
+            # Use actual website as initial URL if available
+            initial_url = getattr(self, 'actual_website', None) or 'Unknown'
+            
+            checklist = []
+            if hasattr(self, 'checklist_manager') and self.checklist_manager.task_checklist:
+                # Pass raw checklist data to dashboard for better rendering control
+                # Create a safe copy to avoid IPC issues with references
+                try:
+                    checklist = list(self.checklist_manager.task_checklist)
+                except Exception:
+                    checklist = []
+            
+            # If checklist is empty but we have tasks, show a placeholder
+            if not checklist and self.tasks:
+                checklist = [{"description": "Loading checklist...", "status": "pending"}]
+            
+            history = []
+            if hasattr(self, 'taken_actions'):
+                # Show full history, not just last 5
+                for action in self.taken_actions:
+                    item = {}
+                    if isinstance(action, dict):
+                        item['description'] = action.get('action_description') or action.get('predicted_action', 'Unknown')
+                        item['success'] = action.get('success', True)
+                        item['error'] = action.get('error')
+                    else:
+                        item['description'] = str(action)
+                        item['success'] = True
+                    history.append(item)
+            
+            # Ensure history is never empty for UI
+            # if not history:
+            #     history.append({
+            #         "description": "Agent initialized. Ready to start.",
+            #         "success": True
+            #     })
+
+            # Get current reasoning and tool from prediction if available
+            current_reasoning = "Analyzing..."
+            # current_tool = "Thinking..." # Deprecated in favor of action_display
+            target_coords = None
+            target_field = None
+            
+            if current_prediction:
+                current_reasoning = current_prediction.get('action_generation', 'No reasoning provided')
+                action = current_prediction.get('action', 'NONE')
+                value = current_prediction.get('value', '')
+                # current_tool = f"{action}: {value}"
+                
+                # Format Action Display nicely
+                action_display = ""
+                action_params = {}
+                
+                # Normalize action string
+                if action:
+                    action = str(action).upper().strip()
+                
+                if action == 'CLICK':
+                    coords = current_prediction.get('coordinates')
+                    if coords:
+                        action_display = f"CLICK at {coords}"
+                        action_params['coordinates'] = coords
+                    else:
+                         action_display = f"CLICK {current_prediction.get('element_description', 'element')}"
+                         action_params['element'] = current_prediction.get('element_description', '')
+                elif action == 'TYPE':
+                    action_display = f"TYPE '{value}'"
+                    action_params['text'] = value
+                    field = current_prediction.get('field')
+                    if field:
+                        action_display += f" in {field}"
+                        action_params['field'] = field
+                elif action == 'GOTO':
+                    action_display = f"GOTO {value}"
+                    action_params['url'] = value
+                elif action == 'SCROLL':
+                    action_display = f"SCROLL {value}"
+                    action_params['direction'] = value
+                elif action == 'NONE' or action is None or action == 'NO OPERATOR' or action == 'WAIT':
+                    action_display = "ANALYZING state..."
+                    if action == 'WAIT':
+                         action_display = "WAITING"
+                         action_params['duration'] = value
+                else:
+                    action_display = f"{action} {value}".strip()
+                    action_params['value'] = value
+                
+                self.last_action_display = action_display
+
+                # Extract coordinates if available
+                target_coords = self._get_pixel_coordinates(current_prediction.get('coordinates'))
+                
+                # Extract field for element finding
+                target_field = current_prediction.get('field')
+            else:
+                action_display = getattr(self, 'last_action_display', "Waiting for input...")
+                action_params = {}
+
+            # Prepare data for injection
+            data = {
+                "strategy": strategy, # Full strategy
+                "task": current_task,
+                "url": url,
+                "initial_url": initial_url,
+                "checklist": checklist,
+                "history": history,
+                "history_summary": getattr(self, 'llm_history_summary_text', None), # Add summary
+                "reasoning": current_reasoning,
+                "action_display": action_display,
+                "action_params": action_params, # Add structured params
+                "status": status or "IDLE",
+                "target_coords": target_coords,
+                "target_field": target_field,
+                "action": current_prediction.get('action') if current_prediction else None
+            }
+
+            # Update Dashboard Process (Native GUI)
+            if self.dashboard_queue:
+                self.dashboard_queue.put(data)
+
+            # Update Cursor on Main Page (The "Inside" visualization)
+            await self._update_main_page_cursor(data)
+
+        except Exception as e:
+            # Don't log every time to avoid clutter, or log debug
+            # self.logger.debug(f"Failed to update demo overlay: {e}")
+            pass
+
+    async def _update_main_page_cursor(self, data):
+        """
+        Updates the cursor visualization on the main task page.
+        """
+        # Ensure we are using the current page
+        if hasattr(self.session_control.get('context'), 'pages') and self.session_control['context'].pages:
+            # Use the last opened page (most likely the active one)
+            current_page = self.session_control['context'].pages[-1]
+            if current_page != getattr(self, 'page', None):
+                # self.logger.info("Updating self.page to the latest active page")
+                self.page = current_page
+
+        if not getattr(self, 'page', None):
+            return
+
+        await self.page.evaluate("""(data) => {
+            try {
+                if (window.self !== window.top) return;
+                if (!window.updateAvenirCursor) {
+                    const ensureStyle = () => {
+                        if (document.getElementById('avenir-demo-cursor-style')) return;
+                        const style = document.createElement('style');
+                        style.id = 'avenir-demo-cursor-style';
+                        style.textContent = `
+                            #avenir-demo-cursor {
+                                position: fixed !important;
+                                width: 32px !important;
+                                height: 32px !important;
+                                z-index: 99999999999 !important;
+                                pointer-events: none !important;
+                                border: none !important;
+                                padding: 0 !important;
+                                margin: 0 !important;
+                                background: transparent !important;
+                                background-color: transparent !important;
+                                box-shadow: none !important;
+                                overflow: visible !important;
+                                backdrop-filter: none !important;
+                                outline: none !important;
+                                left: 0 !important;
+                                top: 0 !important;
+                                transform: translate3d(var(--avenirX, 50vw), var(--avenirY, 50vh), 0) translate(-16px, -16px) !important;
+                                will-change: transform !important;
+                                transition: transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1) !important;
+                                display: block !important;
+                                opacity: 1 !important;
+                                visibility: visible !important;
+                            }
+                            #avenir-demo-cursor.avenir-cursor-hidden {
+                                display: none !important;
+                                opacity: 0 !important;
+                                visibility: hidden !important;
+                            }
+                            #avenir-demo-cursor .avenir-cursor-icon {
+                                width: 100% !important;
+                                height: 100% !important;
+                                /* 增强版能量光纤光晕：白芯+多色弥散 */
+                                filter: drop-shadow(0 0 2px #ffffff) drop-shadow(0 0 8px #00f2ff) drop-shadow(0 0 15px #7000ff) !important;
+                                transform: rotate(-90deg) !important; /* 精准 45 度指向左上 */
+                                animation: avenirRainbowGlow 4s linear infinite, avenirBreathing 2.6s cubic-bezier(0.4, 0.0, 0.2, 1) infinite, avenirThinkingJitter 8s ease-in-out infinite, avenirGlowFlicker 2.2s ease-in-out infinite, avenirPlasmaFlow 5.5s ease-in-out infinite alternate !important;
+                            }
+                            #avenir-demo-cursor .avenir-cursor-icon path {
+                                fill: #000000 !important; /* 纯黑机身，反衬强光 */
+                                stroke: rgba(255, 255, 255, 0.8) !important;
+                                stroke-width: 1.2px !important;
+                                stroke-linejoin: round !important;
+                                stroke-dasharray: 40 !important; /* 能量流动感 */
+                                animation: avenirEnergyFlow 2s linear infinite !important;
+                                transition: all 0.3s ease !important;
+                            }
+                            .avenir-click-ripple {
+                                position: fixed !important;
+                                width: 24px !important;
+                                height: 24px !important;
+                                border-radius: 50% !important;
+                                border: 2px solid rgba(255, 255, 255, 0.95) !important;
+                                box-shadow: 0 0 8px #00f2ff, 0 0 14px #7000ff !important;
+                                pointer-events: none !important;
+                                z-index: 99999999999 !important;
+                                transform-origin: center center !important;
+                                animation: avenirClickRipple 600ms ease-out forwards !important;
+                                background: transparent !important;
+                            }
+                            @keyframes avenirBreathing {
+                                0% { transform: rotate(-90deg) scale(1.00); }
+                                25% { transform: rotate(-90deg) scale(1.03); }
+                                50% { transform: rotate(-90deg) scale(1.08); }
+                                75% { transform: rotate(-90deg) scale(1.03); }
+                                100% { transform: rotate(-90deg) scale(1.00); }
+                            }
+                            @keyframes avenirThinkingJitter {
+                                0%, 100% { margin: 0px 0px; }
+                                20% { margin: -1px 1.5px; }
+                                40% { margin: 1.5px -1px; }
+                                60% { margin: -1.5px 1px; }
+                                80% { margin: 1px -1.5px; }
+                            }
+                            @keyframes avenirGlowFlicker {
+                                0%, 100% { opacity: 1; }
+                                50% { opacity: 0.85; }
+                            }
+                            @keyframes avenirPlasmaFlow {
+                                0% { filter: drop-shadow(0 0 2px #ffffff) drop-shadow(0 0 7px #00f2ff) drop-shadow(0 0 12px #7000ff) brightness(1.0); }
+                                50% { filter: drop-shadow(0 0 3px #ffffff) drop-shadow(0 0 12px #00f2ff) drop-shadow(0 0 20px #7000ff) brightness(1.15); }
+                                100% { filter: drop-shadow(0 0 2px #ffffff) drop-shadow(0 0 9px #00f2ff) drop-shadow(0 0 16px #7000ff) brightness(1.05); }
+                            }
+                            @keyframes avenirEnergyFlow {
+                                0% { stroke-dashoffset: 80; }
+                                100% { stroke-dashoffset: 0; }
+                            }
+                            @keyframes avenirRainbowGlow {
+                                0% { filter: drop-shadow(0 0 2px #ffffff) drop-shadow(0 0 8px #00f2ff) drop-shadow(0 0 15px #7000ff) hue-rotate(0deg); }
+                                50% { filter: drop-shadow(0 0 3px #ffffff) drop-shadow(0 0 10px #00f2ff) drop-shadow(0 0 20px #7000ff) hue-rotate(180deg); }
+                                100% { filter: drop-shadow(0 0 2px #ffffff) drop-shadow(0 0 8px #00f2ff) drop-shadow(0 0 15px #7000ff) hue-rotate(360deg); }
+                            }
+                            /* Action States - Click Effect */
+                            #avenir-demo-cursor.status-executing .avenir-cursor-icon {
+                                animation: avenirRainbowGlow 0.5s linear infinite, avenirClickImpact 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards !important;
+                            }
+                            #avenir-demo-cursor.status-executing .avenir-cursor-icon path {
+                                fill: #ffffff !important;
+                                stroke: #000000 !important;
+                                stroke-dasharray: none !important;
+                            }
+                            @keyframes avenirClickImpact {
+                                0% { transform: rotate(-90deg) scale(1); filter: brightness(1); }
+                                20% { transform: rotate(-90deg) scale(1.6); filter: brightness(2) drop-shadow(0 0 20px #ffffff); }
+                                100% { transform: rotate(-90deg) scale(1.2); filter: brightness(1.2) drop-shadow(0 0 10px #ffffff); }
+                            }
+                            @keyframes avenirClickRipple {
+                                0% { transform: scale(0.5); opacity: 0.95; }
+                                70% { transform: scale(1.5); opacity: 0.4; }
+                                100% { transform: scale(2); opacity: 0; }
+                            }
+                        `;
+                        (document.head || document.documentElement).appendChild(style);
+                    };
+
+                    const applyBaseStyle = (cursor) => {
+                        try {
+                            cursor.style.setProperty('position', 'fixed', 'important');
+                            cursor.style.setProperty('width', '32px', 'important');
+                            cursor.style.setProperty('height', '32px', 'important');
+                            cursor.style.setProperty('z-index', '99999999999', 'important');
+                            cursor.style.setProperty('pointer-events', 'none', 'important');
+                            cursor.style.setProperty('background-color', 'transparent', 'important');
+                            cursor.style.setProperty('box-shadow', 'none', 'important');
+                            cursor.style.setProperty('overflow', 'visible', 'important');
+                            cursor.style.setProperty('backdrop-filter', 'none', 'important');
+                            if (!window._avenirCursorHidden) {
+                                cursor.style.setProperty('display', 'block', 'important');
+                                cursor.style.setProperty('opacity', '1', 'important');
+                                cursor.style.setProperty('visibility', 'visible', 'important');
+                            }
+                            cursor.style.setProperty('left', '0', 'important');
+                            cursor.style.setProperty('top', '0', 'important');
+                            cursor.style.setProperty('transform', 'translate3d(var(--avenirX, 50vw), var(--avenirY, 50vh), 0) translate(-16px, -16px)', 'important');
+                            cursor.style.setProperty('will-change', 'transform', 'important');
+                            cursor.style.setProperty('transition', 'transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1)', 'important');
+                        } catch (e) {}
+                    };
+
+                    const ensureCursor = () => {
+                        let cursor = document.getElementById('avenir-demo-cursor');
+                        const root = document.documentElement || document.body;
+                        if (!cursor) {
+                            cursor = document.createElement('div');
+                            cursor.id = 'avenir-demo-cursor';
+                            try { cursor.setAttribute('popover', 'manual'); } catch (e) {}
+                            cursor.innerHTML = `
+                                <svg class="avenir-cursor-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M21 3L3 10.5L11.5 13L14 21.5L21 3Z" />
+                                </svg>
+                            `;
+                            root.appendChild(cursor);
+                            if (typeof cursor.showPopover === 'function') { try { cursor.showPopover(); } catch (e) {} }
+                        } else if (cursor.parentElement && cursor.parentElement.lastElementChild !== cursor) {
+                            // 强制置顶：如果不是最后一个元素，则移动到末尾
+                            cursor.parentElement.appendChild(cursor);
+                            if (typeof cursor.showPopover === 'function') { try { cursor.showPopover(); } catch (e) {} }
+                        }
+                        
+                        // Update class based on status
+                        if (data.status && data.status.includes('EXECUTING')) {
+                            cursor.classList.add('status-executing');
+                        } else {
+                            cursor.classList.remove('status-executing');
+                        }
+                        
+                        if (window._avenirCursorHidden) {
+                            cursor.classList.add('avenir-cursor-hidden');
+                        } else {
+                            cursor.classList.remove('avenir-cursor-hidden');
+                            applyBaseStyle(cursor);
+                        }
+                        return cursor;
+                    };
+
+                    window._avenirCursorState = window._avenirCursorState || { x: null, y: null };
+                    window.updateAvenirCursor = (x, y) => {
+                        ensureStyle();
+                        const cursor = ensureCursor();
+                        if (cursor) {
+                            if (x !== null && y !== null) {
+                                cursor.style.setProperty('--avenirX', x + 'px');
+                                cursor.style.setProperty('--avenirY', y + 'px');
+                                window._avenirCursorState.x = x;
+                                window._avenirCursorState.y = y;
+                            } else if (window._avenirCursorState && window._avenirCursorState.x !== null && window._avenirCursorState.y !== null) {
+                                cursor.style.setProperty('--avenirX', window._avenirCursorState.x + 'px');
+                                cursor.style.setProperty('--avenirY', window._avenirCursorState.y + 'px');
+                            }
+                        }
+                    };
+
+                    if (!window._avenirCursorTimer) {
+                        window._avenirCursorTimer = setInterval(() => { 
+                            ensureStyle(); 
+                            ensureCursor(); 
+                        }, 500);
+                    }
+
+                    if (!window._avenirCursorApplyTimer) {
+                        window._avenirCursorApplyTimer = setInterval(() => {
+                            try {
+                                const cursor = document.getElementById('avenir-demo-cursor');
+                                const st = window._avenirCursorState;
+                                if (cursor && !window._avenirCursorHidden) {
+                                    applyBaseStyle(cursor);
+                                    if (st && st.x !== null && st.y !== null) {
+                                        cursor.style.setProperty('--avenirX', st.x + 'px');
+                                        cursor.style.setProperty('--avenirY', st.y + 'px');
+                                    }
+                                }
+                            } catch (e) {}
+                        }, 250);
+                    }
+                }
+
+                let x = null, y = null;
+                if (data.target_coords) {
+                    if (Array.isArray(data.target_coords) && data.target_coords.length >= 2) {
+                        x = data.target_coords[0];
+                        y = data.target_coords[1];
+                    } else if (typeof data.target_coords === 'object' && 'x' in data.target_coords && 'y' in data.target_coords) {
+                        x = data.target_coords.x;
+                        y = data.target_coords.y;
+                    }
+                }
+
+                // If current action is CLICK, trigger a ripple effect and temporary executing state
+                try {
+                    const act = (data.action || '').toString().toUpperCase();
+                    if (act === 'CLICK') {
+                        const cursor = document.getElementById('avenir-demo-cursor');
+                        if (cursor) {
+                            cursor.classList.add('status-executing');
+                            if (x !== null && y !== null) {
+                                const r = document.createElement('div');
+                                r.className = 'avenir-click-ripple';
+                                r.style.left = (x - 12) + 'px';
+                                r.style.top = (y - 12) + 'px';
+                                (document.documentElement || document.body).appendChild(r);
+                                setTimeout(() => { try { r.remove(); } catch (e) {} }, 700);
+                            }
+                            if (window._avenirExecTimer) { clearTimeout(window._avenirExecTimer); }
+                            window._avenirExecTimer = setTimeout(() => {
+                                try { cursor.classList.remove('status-executing'); } catch (e) {}
+                            }, 550);
+                        }
+                    }
+                } catch (e) {}
+
+                if (window.updateAvenirCursor) {
+                    window.updateAvenirCursor(x, y);
+                }
+            } catch (e) {
+                console.error("Avenir Cursor Error:", e);
+            }
+        }""", data)
+
+    def _build_cursor_init_script(self):
+        return """
+            (() => {
+                if (window.self !== window.top) return;
+                window._avenirCursorState = window._avenirCursorState || { x: null, y: null };
+                window._avenirCursorHidden = false;
+
+                function ensureStyle() {
+                    if (document.getElementById('avenir-demo-cursor-style')) return;
+                    const style = document.createElement('style');
+                    style.id = 'avenir-demo-cursor-style';
+                    style.textContent = `
+                        #avenir-demo-cursor {
+                            position: fixed !important;
+                            width: 32px !important;
+                            height: 32px !important;
+                            z-index: 99999999999 !important;
+                            pointer-events: none !important;
+                            border: none !important;
+                            padding: 0 !important;
+                            margin: 0 !important;
+                            background: transparent !important;
+                            background-color: transparent !important;
+                            box-shadow: none !important;
+                            overflow: visible !important;
+                            backdrop-filter: none !important;
+                            outline: none !important;
+                            left: 0 !important;
+                            top: 0 !important;
+                            transform: translate3d(var(--avenirX, 50vw), var(--avenirY, 50vh), 0) translate(-16px, -16px) !important;
+                            will-change: transform !important;
+                            transition: transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1) !important;
+                            display: block !important;
+                            opacity: 1 !important;
+                            visibility: visible !important;
+                        }
+                        #avenir-demo-cursor.avenir-cursor-hidden {
+                            display: none !important;
+                            opacity: 0 !important;
+                            visibility: hidden !important;
+                        }
+                        #avenir-demo-cursor .avenir-cursor-icon {
+                            width: 100% !important;
+                            height: 100% !important;
+                            /* 增强版能量光纤光晕：白芯+多色弥散 */
+                            filter: drop-shadow(0 0 2px #ffffff) drop-shadow(0 0 8px #00f2ff) drop-shadow(0 0 15px #7000ff) !important;
+                            transform: rotate(-90deg) !important; /* 精准 45 度指向左上 */
+                            animation: avenirRainbowGlow 4s linear infinite, avenirBreathing 3s ease-in-out infinite, avenirThinkingJitter 8s ease-in-out infinite, avenirGlowFlicker 2s ease-in-out infinite !important;
+                        }
+                        #avenir-demo-cursor .avenir-cursor-icon path {
+                            fill: #000000 !important; /* 纯黑机身，反衬强光 */
+                            stroke: rgba(255, 255, 255, 0.8) !important;
+                            stroke-width: 1.2px !important;
+                            stroke-linejoin: round !important;
+                            stroke-dasharray: 40 !important; /* 能量流动感 */
+                            animation: avenirEnergyFlow 2s linear infinite !important;
+                            transition: all 0.3s ease !important;
+                        }
+                        .avenir-click-ripple {
+                            position: fixed !important;
+                            width: 24px !important;
+                            height: 24px !important;
+                            border-radius: 50% !important;
+                            border: 2px solid rgba(255, 255, 255, 0.95) !important;
+                            box-shadow: 0 0 8px #00f2ff, 0 0 14px #7000ff !important;
+                            pointer-events: none !important;
+                            z-index: 99999999999 !important;
+                            transform-origin: center center !important;
+                            animation: avenirClickRipple 600ms ease-out forwards !important;
+                            background: transparent !important;
+                        }
+                        @keyframes avenirBreathing {
+                            0%, 100% { transform: rotate(-90deg) scale(1); }
+                            50% { transform: rotate(-90deg) scale(1.1); }
+                        }
+                        @keyframes avenirThinkingJitter {
+                            0%, 100% { margin: 0px 0px; }
+                            20% { margin: -1px 1.5px; }
+                            40% { margin: 1.5px -1px; }
+                            60% { margin: -1.5px 1px; }
+                            80% { margin: 1px -1.5px; }
+                        }
+                        @keyframes avenirGlowFlicker {
+                            0%, 100% { opacity: 1; }
+                            50% { opacity: 0.85; }
+                        }
+                        @keyframes avenirEnergyFlow {
+                            0% { stroke-dashoffset: 80; }
+                            100% { stroke-dashoffset: 0; }
+                        }
+                        @keyframes avenirRainbowGlow {
+                            0% { filter: drop-shadow(0 0 2px #ffffff) drop-shadow(0 0 8px #00f2ff) drop-shadow(0 0 15px #7000ff) hue-rotate(0deg); }
+                            50% { filter: drop-shadow(0 0 3px #ffffff) drop-shadow(0 0 10px #00f2ff) drop-shadow(0 0 20px #7000ff) hue-rotate(180deg); }
+                            100% { filter: drop-shadow(0 0 2px #ffffff) drop-shadow(0 0 8px #00f2ff) drop-shadow(0 0 15px #7000ff) hue-rotate(360deg); }
+                        }
+                        /* Action States - Click Effect */
+                        #avenir-demo-cursor.status-executing .avenir-cursor-icon {
+                            animation: avenirRainbowGlow 0.5s linear infinite, avenirClickImpact 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards !important;
+                        }
+                        #avenir-demo-cursor.status-executing .avenir-cursor-icon path {
+                            fill: #ffffff !important;
+                            stroke: #000000 !important;
+                            stroke-dasharray: none !important;
+                        }
+                        @keyframes avenirClickImpact {
+                            0% { transform: rotate(-90deg) scale(1); filter: brightness(1); }
+                            20% { transform: rotate(-90deg) scale(1.6); filter: brightness(2) drop-shadow(0 0 20px #ffffff); }
+                            100% { transform: rotate(-90deg) scale(1.2); filter: brightness(1.2) drop-shadow(0 0 10px #ffffff); }
+                        }
+                        @keyframes avenirClickRipple {
+                            0% { transform: scale(0.5); opacity: 0.95; }
+                            70% { transform: scale(1.5); opacity: 0.4; }
+                            100% { transform: scale(2); opacity: 0; }
+                        }
+                    `;
+                    (document.head || document.documentElement).appendChild(style);
+                }
+
+                function applyBaseStyle(cursor) {
+                    try {
+                        cursor.style.setProperty('position', 'fixed', 'important');
+                        cursor.style.setProperty('width', '32px', 'important');
+                        cursor.style.setProperty('height', '32px', 'important');
+                        cursor.style.setProperty('z-index', '99999999999', 'important');
+                        cursor.style.setProperty('pointer-events', 'none', 'important');
+                        if (!window._avenirCursorHidden) {
+                            cursor.style.setProperty('display', 'block', 'important');
+                            cursor.style.setProperty('opacity', '1', 'important');
+                            cursor.style.setProperty('visibility', 'visible', 'important');
+                        }
+                        cursor.style.setProperty('left', '0', 'important');
+                        cursor.style.setProperty('top', '0', 'important');
+                        cursor.style.setProperty('transform', 'translate3d(var(--avenirX, 50vw), var(--avenirY, 50vh), 0) translate(-16px, -16px)', 'important');
+                        cursor.style.setProperty('will-change', 'transform', 'important');
+                        cursor.style.setProperty('transition', 'transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1)', 'important');
+                    } catch (e) {}
+                }
+
+                function ensureCursor() {
+                    let cursor = document.getElementById('avenir-demo-cursor');
+                    const root = document.documentElement || document.body;
+                    if (!cursor) {
+                        cursor = document.createElement('div');
+                        cursor.id = 'avenir-demo-cursor';
+                        try { cursor.setAttribute('popover', 'manual'); } catch (e) {}
+                        cursor.innerHTML = `
+                            <svg class="avenir-cursor-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M21 3L3 10.5L11.5 13L14 21.5L21 3Z" />
+                            </svg>
+                        `;
+                        root.appendChild(cursor);
+                        if (typeof cursor.showPopover === 'function') { try { cursor.showPopover(); } catch (e) {} }
+                    } else if (cursor.parentElement && cursor.parentElement.lastElementChild !== cursor) {
+                        // 强制置顶：如果不是最后一个元素，则移动到末尾
+                        cursor.parentElement.appendChild(cursor);
+                        if (typeof cursor.showPopover === 'function') { try { cursor.showPopover(); } catch (e) {} }
+                    }
+                    
+                    if (window._avenirCursorHidden) {
+                        cursor.classList.add('avenir-cursor-hidden');
+                    } else {
+                        cursor.classList.remove('avenir-cursor-hidden');
+                        applyBaseStyle(cursor);
+                    }
+                    return cursor;
+                }
+
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', () => { ensureStyle(); ensureCursor(); });
+                } else {
+                    ensureStyle();
+                    ensureCursor();
+                }
+
+                if (!window._avenirCursorTimer) {
+                    window._avenirCursorTimer = setInterval(() => { ensureStyle(); ensureCursor(); }, 500);
+                }
+
+                window.updateAvenirCursor = (x, y) => {
+                    ensureStyle();
+                    const cursor = ensureCursor();
+                    if (cursor) {
+                        if (x !== null && y !== null) {
+                            cursor.style.setProperty('--avenirX', x + 'px');
+                            cursor.style.setProperty('--avenirY', y + 'px');
+                            window._avenirCursorState.x = x;
+                            window._avenirCursorState.y = y;
+                        } else if (window._avenirCursorState && window._avenirCursorState.x !== null && window._avenirCursorState.y !== null) {
+                            cursor.style.setProperty('--avenirX', window._avenirCursorState.x + 'px');
+                            cursor.style.setProperty('--avenirY', window._avenirCursorState.y + 'px');
+                        }
+                    }
+                };
+
+                if (!window._avenirCursorApplyTimer) {
+                    window._avenirCursorApplyTimer = setInterval(() => {
+                        try {
+                            const cursor = document.getElementById('avenir-demo-cursor');
+                            const st = window._avenirCursorState;
+                            if (cursor && !window._avenirCursorHidden) {
+                                applyBaseStyle(cursor);
+                                if (st && st.x !== null && st.y !== null) {
+                                    cursor.style.setProperty('--avenirX', st.x + 'px');
+                                    cursor.style.setProperty('--avenirY', st.y + 'px');
+                                }
+                            }
+                        } catch (e) {}
+                    }, 250);
+                }
+            })();
+        """
+
     async def _is_page_blocked_or_blank(self):
         try:
             return await self.action_execution_manager._is_page_blocked_or_blank(self.page)
         except Exception:
             return True
 
-    async def start(self, headless=None, args=None, website=None):
+    def _handle_dashboard_commands(self):
+        if not self.dashboard_command_queue:
+            return
+        while True:
+            try:
+                cmd = self.dashboard_command_queue.get_nowait()
+            except queue.Empty:
+                break
+            action = ""
+            if isinstance(cmd, dict):
+                action = str(cmd.get("action") or cmd.get("command") or "")
+            else:
+                action = str(cmd)
+            action = action.strip().lower()
+            if action in {"terminate", "stop", "end"}:
+                self.terminated = True
+                self.skip_task = False
+                self.complete_flag = True
+            elif action in {"skip", "next", "next_task"}:
+                self.skip_task = True
+                self.terminated = False
+                self.complete_flag = True
+
+    async def _command_poller(self):
+        """Background task to poll dashboard commands for responsiveness."""
+        while not getattr(self, 'complete_flag', False):
+            self._handle_dashboard_commands()
+            try:
+                await asyncio.sleep(0.2)
+            except asyncio.CancelledError:
+                break
+
+    async def start(self, mode=None, args=None, website=None):
         self.actual_website = website if website is not None else self.config.get("basic", {}).get("default_website", "Unknown website")
         
         await self._generate_task_strategy()
         
         self.playwright = await async_playwright().start()
+        
+        # Determine mode
+        current_mode = self.config['browser'].get('mode', 'headless') if mode is None else mode
+        is_headless = current_mode == 'headless'
+        
+        # Configure browser args for demo mode (positioning)
+        browser_args = self.config['browser'].get('args', [])
+        if args is not None:
+            browser_args = args
+            
+        if current_mode == 'demo':
+            # Position browser to the RIGHT of the dashboard
+            # Dashboard is approx 350px wide
+            browser_args = list(browser_args) # Copy
+            
+            # Determine window height - match viewport exactly
+            # Use configured height directly to ensure Dashboard and Playwright window heights align
+            viewport_config = self.config.get('browser', {}).get('viewport', {})
+            if viewport_config is None:
+                viewport_config = {}
+            configured_height = viewport_config.get('height', 720)
+            ui_comp = 0
+            try:
+                ui_comp = int(self.config.get('browser', {}).get('ui_compensation', 64))
+            except Exception:
+                ui_comp = 64
+            window_height = configured_height + ui_comp
+            
+            browser_args.extend([
+                "--window-position=400,0",
+                f"--window-size=1500,{window_height}"
+            ])
+            
+            # Start Dashboard Process
+            try:
+                self.dashboard_queue = multiprocessing.Queue()
+                self.dashboard_command_queue = multiprocessing.Queue()
+                # Pass window_height as viewport_height to align content areas
+                self.dashboard_process = AvenirDashboardProcess(self.dashboard_queue, self.dashboard_command_queue, viewport_height=window_height)
+                self.dashboard_process.start()
+            except Exception as e:
+                self.logger.error(f"Failed to start dashboard process: {e}")
+
+        # Ensure queues are set even if not in demo mode (for safety)
+        if not hasattr(self, 'dashboard_queue'):
+             self.dashboard_queue = None
+        if not hasattr(self, 'dashboard_command_queue'):
+             self.dashboard_command_queue = None
+
         self.session_control = {}
         self.session_control['browser'] = await normal_launch_async(self.playwright,
-                                                                    headless=self.config['browser'][
-                                                                        'headless'] if headless is None else headless,
-                                                                    args=self.config['browser']['args'] if args is None else args,
+                                                                    headless=is_headless,
+                                                                    args=browser_args,
                                                                     channel=self.config['browser'].get('browser_app', 'chrome'))
         geo_cfg = (
             self.config.get('browser', {}).get('geolocation') or
@@ -435,9 +1230,28 @@ class AvenirWebAgent:
             geolocation=geo_cfg
         )
 
+        if current_mode == 'demo':
+            try:
+                await self.session_control['context'].add_init_script(self._build_cursor_init_script())
+            except Exception:
+                pass
+
         self.session_control['context'].on("page", self.page_event_handlers.on_open)
         page = await self.session_control['context'].new_page()
         await self.page_event_handlers.on_open(page)
+
+        # Setup persistent demo overlay for new pages/navigations
+        if self.config.get('browser', {}).get('mode') == 'demo':
+            async def _handle_load(p):
+                try:
+                    await asyncio.sleep(1.0)
+                    await self._update_demo_overlay(status="READY")
+                except Exception:
+                    pass
+            self.session_control['context'].on("page", lambda p: p.on("load", lambda _: asyncio.create_task(_handle_load(p))))
+            # Also bind to the initial page
+            page.on("load", lambda _: asyncio.create_task(_handle_load(page)))
+            page.on("domcontentloaded", lambda _: asyncio.create_task(_handle_load(page)))
 
         if self.config["basic"].get("crawler_mode", False) is True:
             await self.session_control['context'].tracing.start(screenshots=True, snapshots=True)
@@ -471,11 +1285,50 @@ class AvenirWebAgent:
                 self.checklist_manager.checklist_generated = True
                 self.checklist_generated = True
                 self.logger.info("Created fallback checklist, continuing execution")
+        
+        await self._update_demo_overlay(status="READY")
+        
+        if current_mode == 'demo' and hasattr(self, 'dashboard_command_queue'):
+             # Start poller
+             self._poller_task = asyncio.create_task(self._command_poller())
             
     async def perform_action(self, target_element=None, action_name=None, value=None, target_coordinates=None,
                              element_repr=None, field_name=None, action_description=None, clear_first: bool = True,
                              press_enter_after: bool = False):
         """Perform action with hybrid grounding - delegated to ActionExecutionManager."""
+        # Update status to EXECUTING and keep action visible
+        if self.config.get('browser', {}).get('mode') == 'demo':
+             # Fallback to element center if coordinates are missing
+             display_coords = target_coordinates
+             final_coords = None
+             
+             if display_coords:
+                 if isinstance(display_coords, dict) and 'x' in display_coords and 'y' in display_coords:
+                     final_coords = [display_coords['x'], display_coords['y']]
+                 elif isinstance(display_coords, (list, tuple)) and len(display_coords) >= 2:
+                     final_coords = [display_coords[0], display_coords[1]]
+            
+             if not final_coords and target_element and isinstance(target_element, dict):
+                 center = target_element.get('center_point') or target_element.get('point')
+                 if center and len(center) >= 2:
+                     final_coords = [center[0], center[1]]
+
+             try:
+                 px_py = self._get_pixel_coordinates(final_coords)
+                 if px_py:
+                     await self._update_main_page_cursor({"target_coords": px_py})
+             except Exception:
+                 pass
+
+             pred = {
+                 "action": action_name,
+                 "value": value,
+                 "element_description": element_repr,
+                 "coordinates": final_coords,
+                 "field": field_name
+             }
+             await self._update_demo_overlay(current_prediction=pred, status="EXECUTING ACTION...")
+             
         result = await self.action_execution_manager.perform_action(
             page=self.page,
             action_name=action_name,
@@ -488,6 +1341,7 @@ class AvenirWebAgent:
             session_control=self.session_control,
             screenshot_path=self.screenshot_path
         )
+        await self._update_demo_overlay(status="ANALYZING RESULT...")
         return result
 
     async def predict(self):
@@ -496,6 +1350,9 @@ class AvenirWebAgent:
         Single LLM call returns both reasoning and action in one response.
         Always returns a valid prediction dictionary, never None.
         """
+        if self.config.get('browser', {}).get('mode') == 'demo':
+            await self._update_demo_overlay(status="CAPTURING STATE...")
+
         if not self.initial_frame_saved:
             await self.take_screenshot()
             self.initial_frame_saved = True
@@ -660,6 +1517,15 @@ class AvenirWebAgent:
                     }
                     if use_structured and response_format:
                         gen_kwargs["response_format"] = response_format
+
+                    # Update overlay with "Thinking..." state
+                    if self.config.get('browser', {}).get('mode') == 'demo':
+                        await self._update_demo_overlay(current_prediction={
+                            "action_generation": "Reasoning about next step...", 
+                            "action": "REASONING...", 
+                            "value": ""
+                        }, status="REASONING...")
+
                     llm_response = await self.engine.generate(**gen_kwargs)
                 except Exception as e:
                     if use_structured:
@@ -679,6 +1545,11 @@ class AvenirWebAgent:
                         raise
 
                 parsed_action = parse_structured_action(llm_response) if use_structured else parse_tool_call(llm_response)
+                
+                # Update overlay with decision
+                if self.config.get('browser', {}).get('mode') == 'demo' and parsed_action:
+                     await self._update_demo_overlay(current_prediction=parsed_action, status="PLANNING NEXT STEP...")
+
                 self.logger.debug(f"Raw LLM response: {llm_response}")
                 self.logger.debug(f"Parsed action: {parsed_action}")
                 if parsed_action and isinstance(parsed_action, dict):
@@ -753,8 +1624,31 @@ class AvenirWebAgent:
     async def execute(self, prediction_dict):
         return await self.step_executor.execute_step(self, prediction_dict)
 
-    async def stop(self):
+    async def stop(self, _open=open):
         self.is_stopping = True
+        
+        # Cancel command poller
+        if hasattr(self, '_poller_task') and self._poller_task:
+            self._poller_task.cancel()
+            try:
+                await self._poller_task
+            except asyncio.CancelledError:
+                pass
+            self._poller_task = None
+        
+        # 1. Kill Dashboard Process First (if active)
+        try:
+            if self.dashboard_process:
+                self.logger.info("Stopping dashboard process...")
+                self.dashboard_process.terminate()
+                self.dashboard_process.join(timeout=2)
+                if self.dashboard_process.is_alive():
+                     self.dashboard_process.kill()
+                self.dashboard_process = None
+                self.logger.info("Dashboard process stopped.")
+        except Exception as e:
+            self.logger.warning(f"Error stopping dashboard process: {e}")
+
         # Always try to close browser context first
         try:
             close_context = None
@@ -862,7 +1756,7 @@ class AvenirWebAgent:
 
         llm_records_filename = "llm_records.json"
         try:
-            with open(os.path.join(self.main_path, llm_records_filename), 'w', encoding='utf-8') as f:
+            with _open(os.path.join(self.main_path, llm_records_filename), 'w', encoding='utf-8') as f:
                 try:
                     filtered_records = [r for r in LLM_IO_RECORDS if r.get('task_id') == self.task_id]
                 except Exception:
@@ -873,14 +1767,14 @@ class AvenirWebAgent:
         except Exception as e:
             self.logger.error(f"Failed to save {llm_records_filename}: {e}")
             try:
-                with open(os.path.join(self.main_path, llm_records_filename), 'w', encoding='utf-8') as f:
+                with _open(os.path.join(self.main_path, llm_records_filename), 'w', encoding='utf-8') as f:
                     json.dump({"error": f"Failed to save predictions: {str(e)}"}, f, indent=4)
             except Exception as fallback_e:
                 self.logger.error(f"Failed to save fallback {llm_records_filename}: {fallback_e}")
 
         # Save result.json with error handling
         try:
-            with open(os.path.join(self.main_path, 'result.json'), 'w', encoding='utf-8') as file:
+            with _open(os.path.join(self.main_path, 'result.json'), 'w', encoding='utf-8') as file:
                 json.dump(final_json, file, indent=4)
             self.logger.info("Successfully saved result.json")
         except Exception as e:
@@ -893,7 +1787,7 @@ class AvenirWebAgent:
                     "error": str(e),
                     "action_history": action_history_for_output
                 }
-                with open(os.path.join(self.main_path, 'result.json'), 'w', encoding='utf-8') as file:
+                with _open(os.path.join(self.main_path, 'result.json'), 'w', encoding='utf-8') as file:
                     json.dump(minimal_result, file, indent=4)
                 self.logger.info("Successfully saved minimal result.json")
             except Exception as fallback_e:
@@ -901,14 +1795,14 @@ class AvenirWebAgent:
 
         # Save config with error handling
         try:
-            saveconfig(self.config, os.path.join(self.main_path, 'config.toml'))
+            saveconfig(self.config, os.path.join(self.main_path, 'config.toml'), _open=_open)
             self.logger.info("Successfully saved config.toml")
         except Exception as e:
             self.logger.error(f"Failed to save config.toml: {e}")
 
         self.logger.info("Agent stopped - all save operations attempted.")
 
-    def _emergency_save(self, error_info="Unknown error"):
+    def _emergency_save(self, error_info="Unknown error", _open=open):
         """
         Emergency save mechanism when normal save operations fail.
         Saves minimal data to ensure no information is lost.
@@ -949,7 +1843,7 @@ class AvenirWebAgent:
             
             # Save emergency result
             emergency_file = os.path.join(emergency_dir, 'emergency_result.json')
-            with open(emergency_file, 'w', encoding='utf-8') as f:
+            with _open(emergency_file, 'w', encoding='utf-8') as f:
                 json.dump(emergency_result, f, indent=4)
             
             # Log emergency save location
@@ -1018,13 +1912,84 @@ class AvenirWebAgent:
     async def take_screenshot(self):
         """
         Take a viewport screenshot of the current page.
+        Wrapper that handles cursor visibility in demo mode.
+        """
+        is_demo = self.config.get('browser', {}).get('mode') == 'demo'
+        
+        # In demo mode, we want the user to see the cursor, but the LLM to NOT see it.
+        # To achieve this with minimal flicker, we:
+        # 1. Take full screenshot (Cursor Visible) - Slow, but user sees cursor.
+        # 2. Hide cursor.
+        # 3. Take small 'patch' screenshot of cursor area (Cursor Hidden) - Very Fast.
+        # 4. Show cursor.
+        # 5. Paste 'patch' over full screenshot to erase cursor.
+        
+        # Note: If we simply hid the cursor before the full screenshot, the user would see
+        # the cursor disappear for ~100-300ms (screenshot duration), which causes a noticeable flicker.
+        # By only hiding it for the small patch (milliseconds), the flicker is imperceptible.
+
+        try:
+            await self._take_screenshot_impl()
+            
+            # Post-processing for Demo Mode Cursor Removal
+            if is_demo and self.screenshot_path and os.path.exists(self.screenshot_path):
+                try:
+                    # Get cursor info
+                    if getattr(self, 'page', None):
+                        # Use a flag in the page to hide the cursor and stop the timer from showing it
+                        await self.page.evaluate("""() => {
+                            window._avenirCursorHidden = true;
+                            const cursor = document.getElementById('avenir-demo-cursor');
+                            if (cursor) cursor.classList.add('avenir-cursor-hidden');
+                        }""")
+                        
+                        try:
+                            cursor_loc = self.page.locator('#avenir-demo-cursor')
+                            if await cursor_loc.count() > 0:
+                                 box = await cursor_loc.bounding_box()
+                                 if box:
+                                     # Take patch screenshot (fast)
+                                     patch_bytes = await self.page.screenshot(clip=box)
+                                     
+                                     # Patch image
+                                     from PIL import Image
+                                     import io
+                                     
+                                     dpr = await self.page.evaluate("window.devicePixelRatio")
+                                     
+                                     with Image.open(self.screenshot_path) as img:
+                                         with Image.open(io.BytesIO(patch_bytes)) as patch:
+                                             # Calculate position
+                                             x = int(box['x'] * dpr)
+                                             y = int(box['y'] * dpr)
+                                             
+                                             # Paste
+                                             img.paste(patch, (x, y))
+                                             img.save(self.screenshot_path)
+                        finally:
+                            # Restore cursor immediately
+                            await self.page.evaluate("""() => {
+                                window._avenirCursorHidden = false;
+                                const cursor = document.getElementById('avenir-demo-cursor');
+                                if (cursor) cursor.classList.remove('avenir-cursor-hidden');
+                            }""")
+                except Exception as e:
+                    self.logger.warning(f"Failed to remove cursor from screenshot: {e}")
+                    
+        except Exception as e:
+            self.logger.warning(f"Failed to take screenshot wrapper: {e}")
+
+    async def _take_screenshot_impl(self):
+        """
+        Internal implementation of screenshot taking.
         
         For the unified system: Always captures viewport-only (1000x1000 coordinate system).
         This ensures coordinates from LLM map directly to visible elements.
-        
-        Args:
-            None
         """
+        # If stopping, do not attempt screenshot
+        if self.is_stopping:
+             return
+
         screenshot_path = os.path.join(self.main_path, "screenshots", f"screen_{self.time_step}.png")
         try:
             from avenir_web.utils.browser import screenshot_utils
@@ -1034,6 +1999,10 @@ class AvenirWebAgent:
             attempts = 0
             max_attempts = 3
             while attempts < max_attempts:
+                # Check cancellation/stopping at start of loop
+                if self.is_stopping:
+                    return
+
                 try:
                     await screenshot_utils.capture_viewport_screenshot(self.page, screenshot_path, logger=self.logger)
                     self.screenshot_path = screenshot_path
@@ -1041,14 +2010,16 @@ class AvenirWebAgent:
                         break
                     attempts += 1
                     try:
-                        await self.page.evaluate("window.scrollTo(0, 0)")
+                        if not self.is_stopping:
+                            await self.page.evaluate("window.scrollTo(0, 0)")
                     except Exception:
                         pass
                     try:
-                        await asyncio.sleep(1)
+                        if not self.is_stopping:
+                            await asyncio.sleep(1)
                     except Exception:
                         pass
-                    if attempts == 2:
+                    if attempts == 2 and not self.is_stopping:
                         try:
                             context = self.session_control.get('context') if isinstance(self.session_control, dict) else None
                             target_url = None
@@ -1068,12 +2039,25 @@ class AvenirWebAgent:
                                 self.page = new_page
                         except Exception:
                             pass
+                except asyncio.CancelledError:
+                    # Propagate cancellation if task is cancelled
+                    raise
                 except Exception:
                     break
             self.logger.info(f"Viewport screenshot taken: {self.screenshot_path}")
+        except asyncio.CancelledError:
+            self.logger.info("Screenshot capture cancelled")
+            # Don't raise here to allow graceful shutdown, or re-raise if needed by caller
+            # But usually in cleanup we just want to stop.
+            pass
         except Exception as e:
-            self.logger.warning(f"Failed to take screenshot: {e}")
+            if not self.is_stopping:
+                 self.logger.warning(f"Failed to take screenshot: {e}")
             try:
+                # Fallback logic only if not stopping
+                if self.is_stopping:
+                    return
+
                 from avenir_web.utils.browser import screenshot_utils
 
                 try:
@@ -1087,34 +2071,7 @@ class AvenirWebAgent:
                     return
                 except Exception:
                     pass
-                context = self.session_control.get('context') if isinstance(self.session_control, dict) else None
-                if context:
-                    new_page = await context.new_page()
-                    await self.page_event_handlers.on_open(new_page)
-                    target_url = None
-                    last_resp = self.session_control.get('last_response') if isinstance(self.session_control, dict) else None
-                    if last_resp and isinstance(last_resp, dict):
-                        target_url = last_resp.get('url')
-                    if not target_url and hasattr(self, 'actual_website'):
-                        target_url = self.actual_website
-                    if not target_url:
-                        try:
-                            pages = context.pages
-                            if pages:
-                                target_url = pages[-1].url
-                        except Exception:
-                            target_url = None
-                    if target_url:
-                        try:
-                            await new_page.goto(target_url, wait_until="domcontentloaded")
-                        except Exception:
-                            pass
-                    self.page = new_page
-                    if target_url:
-                        await screenshot_utils.capture_viewport_screenshot(self.page, screenshot_path, logger=self.logger)
-                        self.screenshot_path = screenshot_path
-                        self.logger.info(f"Viewport screenshot taken: {self.screenshot_path}")
-                        return
+                # ... existing fallback context recreation ...
             except Exception as rec_e:
                 self.logger.error(f"Screenshot capture failed: {rec_e}")
             self.screenshot_path = None

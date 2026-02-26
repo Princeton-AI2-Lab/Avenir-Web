@@ -41,7 +41,7 @@ async def main_async() -> int:
     parser.add_argument("--website", required=True)
     parser.add_argument("--task-id", default=None)
     parser.add_argument("--output-dir", default=str(repo_root / "outputs"))
-    parser.add_argument("--headless", default=None)
+    parser.add_argument("--mode", default=None, help="Browser mode: headless, headed, or demo")
     args = parser.parse_args()
 
     config_path = Path(args.config).resolve()
@@ -51,11 +51,9 @@ async def main_async() -> int:
         runner.config.setdefault("basic", {})
         runner.config["basic"]["save_file_dir"] = str(Path(args.output_dir).resolve())
 
-        if args.headless is not None:
-            headless_str = str(args.headless).strip().lower()
-            headless_bool = headless_str in ("1", "true", "yes", "y", "t")
+        if args.mode is not None:
             runner.config.setdefault("playwright", {})
-            runner.config["playwright"]["headless"] = headless_bool
+            runner.config["playwright"]["mode"] = args.mode
 
     if not os.getenv("OPENROUTER_API_KEY"):
         raise SystemExit("Missing OPENROUTER_API_KEY in environment")

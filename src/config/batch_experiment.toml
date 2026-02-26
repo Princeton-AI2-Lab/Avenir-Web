@@ -30,7 +30,7 @@ rate_limit = -1 # Rate limit for API calls (-1 for no limit)
 highlight = false # If true, highlights elements during processing. Included in screenshots.
 
 [playwright]
-headless = true # Set to false to show browser window, true to run in background
+mode = "demo" # Browser mode: "headless" (background), "headed" (window), or "demo" (window + overlay)
 geolocation.longitude=-74.66 # Longitude for geolocation.
 geolocation.latitude=40.34 # Latitude for geolocation.
 viewport.width = 1400 # Browser window width.

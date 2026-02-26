@@ -34,6 +34,17 @@ class AvenirWebRunner:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self._configure_api_keys()
+        
+        # Set default browser mode if not present
+        if 'playwright' not in self.config:
+            self.config['playwright'] = {}
+        if 'mode' not in self.config['playwright']:
+            # Fallback for old configs that might use 'headless'
+            headless = self.config['playwright'].get('headless', True)
+            self.config['playwright']['mode'] = 'headless' if headless else 'headed'
+
+        # Configure logging
+        self.logger = logging.getLogger(__name__)
 
     @classmethod
     def from_toml(cls, config_path: Union[str, Path]) -> "AvenirWebRunner":
@@ -98,7 +109,7 @@ class AvenirWebRunner:
             "save_file_dir": save_dir,
             "max_auto_op": self.config.get("experiment", {}).get("max_op", 30),
             "highlight": self.config.get("experiment", {}).get("highlight", self.config.get("agent", {}).get("highlight", False)),
-            "headless": self.config.get("playwright", {}).get("headless", self.config.get("browser", {}).get("headless", True)),
+            "mode": self.config.get("playwright", {}).get("mode", "headless"),
             "viewport": self.config.get("playwright", {}).get("viewport", self.config.get("browser", {}).get("viewport", {"width": 1200, "height": 1080})),
             "model": model_name,
             "temperature": temperature,
@@ -122,6 +133,10 @@ class AvenirWebRunner:
         try:
             await agent.start(website=website)
             while not agent.complete_flag:
+                agent._handle_dashboard_commands()
+                if agent.complete_flag:
+                    result["status"] = "skipped" if getattr(agent, "skip_task", False) else "terminated"
+                    break
                 elapsed = asyncio.get_event_loop().time() - start_time
                 if max_total_execution_time_s and elapsed > max_total_execution_time_s:
                     agent.complete_flag = True
@@ -173,6 +188,9 @@ class AvenirWebRunner:
                 max_consecutive_errors=max_consecutive_errors,
             )
             summary["results"].append(r)
+            if r.get("status") == "terminated":
+                self.logger.info("Global termination requested. Stopping execution of remaining tasks.")
+                break
             if r.get("status") == "completed":
                 summary["completed"] += 1
             else:
