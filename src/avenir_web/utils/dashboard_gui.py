@@ -24,6 +24,7 @@ class AvenirDashboardProcess(multiprocessing.Process):
         self.data_queue = data_queue
         self.command_queue = command_queue
         self.viewport_height = viewport_height
+        self.start_time = time.time()
         self.daemon = True # Ensure process dies when parent dies
 
     def run(self):
@@ -136,6 +137,10 @@ class AvenirDashboardProcess(multiprocessing.Process):
 
         icon_font = ("Arial", 16)
         
+        # Timer moved into button_row - now on the other side
+        self.timer_label = ctk.CTkLabel(button_row, text="00:00", text_color="#888", font=self.font_small)
+        self.timer_label.pack(side="left", padx=(0, 10))
+
         self.stop_btn = ctk.CTkButton(button_row, text="⏹", command=lambda: self._send_command("terminate"),
                       fg_color="transparent", border_width=1, border_color="#333",
                       hover_color="#222", text_color="#EF5350",  # Red-ish for Stop
@@ -244,6 +249,25 @@ class AvenirDashboardProcess(multiprocessing.Process):
 
     def _start_update_loop(self):
         self._check_queue()
+        self._update_timer()
+
+    def _update_timer(self):
+        """Updates the elapsed time timer."""
+        elapsed = int(time.time() - self.start_time)
+        
+        # Format duration
+        if elapsed < 3600:
+            minutes = elapsed // 60
+            seconds = elapsed % 60
+            time_str = f"{minutes:02d}:{seconds:02d}"
+        else:
+            hours = elapsed // 3600
+            minutes = (elapsed % 3600) // 60
+            seconds = elapsed % 60
+            time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            
+        self.timer_label.configure(text=time_str)
+        self.root.after(1000, self._update_timer)
 
     def _send_command(self, command):
         if not self.command_queue:

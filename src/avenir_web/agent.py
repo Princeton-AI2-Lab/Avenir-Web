@@ -591,11 +591,15 @@ class AvenirWebAgent:
 
                 # Extract coordinates if available
                 target_coords = self._get_pixel_coordinates(current_prediction.get('coordinates'))
+                if target_coords:
+                    self.last_target_coords = target_coords
                 
                 # Extract field for element finding
                 target_field = current_prediction.get('field')
             else:
                 action_display = getattr(self, 'last_action_display', "Waiting for input...")
+                target_coords = getattr(self, 'last_target_coords', None)
+                target_field = None
                 action_params = {}
 
             # Prepare data for injection
@@ -617,11 +621,19 @@ class AvenirWebAgent:
             }
 
             # Update Dashboard Process (Native GUI)
-            if self.dashboard_queue:
-                self.dashboard_queue.put(data)
+            if self.dashboard_queue and getattr(self, 'dashboard_process', None) and self.dashboard_process.is_alive():
+                try:
+                    self.dashboard_queue.put_nowait(data)
+                except queue.Full:
+                    pass
+                except Exception:
+                    pass
 
             # Update Cursor on Main Page (The "Inside" visualization)
-            await self._update_main_page_cursor(data)
+            try:
+                await self._update_main_page_cursor(data)
+            except Exception:
+                pass
 
         except Exception as e:
             # Don't log every time to avoid clutter, or log debug
@@ -630,494 +642,185 @@ class AvenirWebAgent:
 
     async def _update_main_page_cursor(self, data):
         """
-        Updates the cursor visualization on the main task page.
+        Hyper-robust cursor update: ensures script existence on every call.
         """
-        # Ensure we are using the current page
         if hasattr(self.session_control.get('context'), 'pages') and self.session_control['context'].pages:
-            # Use the last opened page (most likely the active one)
             current_page = self.session_control['context'].pages[-1]
             if current_page != getattr(self, 'page', None):
-                # self.logger.info("Updating self.page to the latest active page")
                 self.page = current_page
-
         if not getattr(self, 'page', None):
             return
 
-        await self.page.evaluate("""(data) => {
-            try {
+        # Self-healing logic: re-inject init script if not present
+        init_js = self._build_cursor_init_script().replace("`", "\\`").replace("$", "\\$")
+        
+        await self.page.evaluate(f"""(data) => {{
+            try {{
                 if (window.self !== window.top) return;
-                if (!window.updateAvenirCursor) {
-                    const ensureStyle = () => {
-                        if (document.getElementById('avenir-demo-cursor-style')) return;
-                        const style = document.createElement('style');
-                        style.id = 'avenir-demo-cursor-style';
-                        style.textContent = `
-                            #avenir-demo-cursor {
-                                position: fixed !important;
-                                width: 32px !important;
-                                height: 32px !important;
-                                z-index: 99999999999 !important;
-                                pointer-events: none !important;
-                                border: none !important;
-                                padding: 0 !important;
-                                margin: 0 !important;
-                                background: transparent !important;
-                                background-color: transparent !important;
-                                box-shadow: none !important;
-                                overflow: visible !important;
-                                backdrop-filter: none !important;
-                                outline: none !important;
-                                left: 0 !important;
-                                top: 0 !important;
-                                transform: translate3d(var(--avenirX, 50vw), var(--avenirY, 50vh), 0) translate(-16px, -16px) !important;
-                                will-change: transform !important;
-                                transition: transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1) !important;
-                                display: block !important;
-                                opacity: 1 !important;
-                                visibility: visible !important;
-                            }
-                            #avenir-demo-cursor.avenir-cursor-hidden {
-                                display: none !important;
-                                opacity: 0 !important;
-                                visibility: hidden !important;
-                            }
-                            #avenir-demo-cursor .avenir-cursor-icon {
-                                width: 100% !important;
-                                height: 100% !important;
-                                /* 增强版能量光纤光晕：白芯+多色弥散 */
-                                filter: drop-shadow(0 0 2px #ffffff) drop-shadow(0 0 8px #00f2ff) drop-shadow(0 0 15px #7000ff) !important;
-                                transform: rotate(-90deg) !important; /* 精准 45 度指向左上 */
-                                animation: avenirRainbowGlow 4s linear infinite, avenirBreathing 2.6s cubic-bezier(0.4, 0.0, 0.2, 1) infinite, avenirThinkingJitter 8s ease-in-out infinite, avenirGlowFlicker 2.2s ease-in-out infinite, avenirPlasmaFlow 5.5s ease-in-out infinite alternate !important;
-                            }
-                            #avenir-demo-cursor .avenir-cursor-icon path {
-                                fill: #000000 !important; /* 纯黑机身，反衬强光 */
-                                stroke: rgba(255, 255, 255, 0.8) !important;
-                                stroke-width: 1.2px !important;
-                                stroke-linejoin: round !important;
-                                stroke-dasharray: 40 !important; /* 能量流动感 */
-                                animation: avenirEnergyFlow 2s linear infinite !important;
-                                transition: all 0.3s ease !important;
-                            }
-                            .avenir-click-ripple {
-                                position: fixed !important;
-                                width: 24px !important;
-                                height: 24px !important;
-                                border-radius: 50% !important;
-                                border: 2px solid rgba(255, 255, 255, 0.95) !important;
-                                box-shadow: 0 0 8px #00f2ff, 0 0 14px #7000ff !important;
-                                pointer-events: none !important;
-                                z-index: 99999999999 !important;
-                                transform-origin: center center !important;
-                                animation: avenirClickRipple 600ms ease-out forwards !important;
-                                background: transparent !important;
-                            }
-                            @keyframes avenirBreathing {
-                                0% { transform: rotate(-90deg) scale(1.00); }
-                                25% { transform: rotate(-90deg) scale(1.03); }
-                                50% { transform: rotate(-90deg) scale(1.08); }
-                                75% { transform: rotate(-90deg) scale(1.03); }
-                                100% { transform: rotate(-90deg) scale(1.00); }
-                            }
-                            @keyframes avenirThinkingJitter {
-                                0%, 100% { margin: 0px 0px; }
-                                20% { margin: -1px 1.5px; }
-                                40% { margin: 1.5px -1px; }
-                                60% { margin: -1.5px 1px; }
-                                80% { margin: 1px -1.5px; }
-                            }
-                            @keyframes avenirGlowFlicker {
-                                0%, 100% { opacity: 1; }
-                                50% { opacity: 0.85; }
-                            }
-                            @keyframes avenirPlasmaFlow {
-                                0% { filter: drop-shadow(0 0 2px #ffffff) drop-shadow(0 0 7px #00f2ff) drop-shadow(0 0 12px #7000ff) brightness(1.0); }
-                                50% { filter: drop-shadow(0 0 3px #ffffff) drop-shadow(0 0 12px #00f2ff) drop-shadow(0 0 20px #7000ff) brightness(1.15); }
-                                100% { filter: drop-shadow(0 0 2px #ffffff) drop-shadow(0 0 9px #00f2ff) drop-shadow(0 0 16px #7000ff) brightness(1.05); }
-                            }
-                            @keyframes avenirEnergyFlow {
-                                0% { stroke-dashoffset: 80; }
-                                100% { stroke-dashoffset: 0; }
-                            }
-                            @keyframes avenirRainbowGlow {
-                                0% { filter: drop-shadow(0 0 2px #ffffff) drop-shadow(0 0 8px #00f2ff) drop-shadow(0 0 15px #7000ff) hue-rotate(0deg); }
-                                50% { filter: drop-shadow(0 0 3px #ffffff) drop-shadow(0 0 10px #00f2ff) drop-shadow(0 0 20px #7000ff) hue-rotate(180deg); }
-                                100% { filter: drop-shadow(0 0 2px #ffffff) drop-shadow(0 0 8px #00f2ff) drop-shadow(0 0 15px #7000ff) hue-rotate(360deg); }
-                            }
-                            /* Action States - Click Effect */
-                            #avenir-demo-cursor.status-executing .avenir-cursor-icon {
-                                animation: avenirRainbowGlow 0.5s linear infinite, avenirClickImpact 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards !important;
-                            }
-                            #avenir-demo-cursor.status-executing .avenir-cursor-icon path {
-                                fill: #ffffff !important;
-                                stroke: #000000 !important;
-                                stroke-dasharray: none !important;
-                            }
-                            @keyframes avenirClickImpact {
-                                0% { transform: rotate(-90deg) scale(1); filter: brightness(1); }
-                                20% { transform: rotate(-90deg) scale(1.6); filter: brightness(2) drop-shadow(0 0 20px #ffffff); }
-                                100% { transform: rotate(-90deg) scale(1.2); filter: brightness(1.2) drop-shadow(0 0 10px #ffffff); }
-                            }
-                            @keyframes avenirClickRipple {
-                                0% { transform: scale(0.5); opacity: 0.95; }
-                                70% { transform: scale(1.5); opacity: 0.4; }
-                                100% { transform: scale(2); opacity: 0; }
-                            }
-                        `;
-                        (document.head || document.documentElement).appendChild(style);
-                    };
-
-                    const applyBaseStyle = (cursor) => {
-                        try {
-                            cursor.style.setProperty('position', 'fixed', 'important');
-                            cursor.style.setProperty('width', '32px', 'important');
-                            cursor.style.setProperty('height', '32px', 'important');
-                            cursor.style.setProperty('z-index', '99999999999', 'important');
-                            cursor.style.setProperty('pointer-events', 'none', 'important');
-                            cursor.style.setProperty('background-color', 'transparent', 'important');
-                            cursor.style.setProperty('box-shadow', 'none', 'important');
-                            cursor.style.setProperty('overflow', 'visible', 'important');
-                            cursor.style.setProperty('backdrop-filter', 'none', 'important');
-                            if (!window._avenirCursorHidden) {
-                                cursor.style.setProperty('display', 'block', 'important');
-                                cursor.style.setProperty('opacity', '1', 'important');
-                                cursor.style.setProperty('visibility', 'visible', 'important');
-                            }
-                            cursor.style.setProperty('left', '0', 'important');
-                            cursor.style.setProperty('top', '0', 'important');
-                            cursor.style.setProperty('transform', 'translate3d(var(--avenirX, 50vw), var(--avenirY, 50vh), 0) translate(-16px, -16px)', 'important');
-                            cursor.style.setProperty('will-change', 'transform', 'important');
-                            cursor.style.setProperty('transition', 'transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1)', 'important');
-                        } catch (e) {}
-                    };
-
-                    const ensureCursor = () => {
-                        let cursor = document.getElementById('avenir-demo-cursor');
-                        const root = document.documentElement || document.body;
-                        if (!cursor) {
-                            cursor = document.createElement('div');
-                            cursor.id = 'avenir-demo-cursor';
-                            try { cursor.setAttribute('popover', 'manual'); } catch (e) {}
-                            cursor.innerHTML = `
-                                <svg class="avenir-cursor-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                    <path d="M21 3L3 10.5L11.5 13L14 21.5L21 3Z" />
-                                </svg>
-                            `;
-                            root.appendChild(cursor);
-                            if (typeof cursor.showPopover === 'function') { try { cursor.showPopover(); } catch (e) {} }
-                        } else if (cursor.parentElement && cursor.parentElement.lastElementChild !== cursor) {
-                            // 强制置顶：如果不是最后一个元素，则移动到末尾
-                            cursor.parentElement.appendChild(cursor);
-                            if (typeof cursor.showPopover === 'function') { try { cursor.showPopover(); } catch (e) {} }
-                        }
-                        
-                        // Update class based on status
-                        if (data.status && data.status.includes('EXECUTING')) {
-                            cursor.classList.add('status-executing');
-                        } else {
-                            cursor.classList.remove('status-executing');
-                        }
-                        
-                        if (window._avenirCursorHidden) {
-                            cursor.classList.add('avenir-cursor-hidden');
-                        } else {
-                            cursor.classList.remove('avenir-cursor-hidden');
-                            applyBaseStyle(cursor);
-                        }
-                        return cursor;
-                    };
-
-                    window._avenirCursorState = window._avenirCursorState || { x: null, y: null };
-                    window.updateAvenirCursor = (x, y) => {
-                        ensureStyle();
-                        const cursor = ensureCursor();
-                        if (cursor) {
-                            if (x !== null && y !== null) {
-                                cursor.style.setProperty('--avenirX', x + 'px');
-                                cursor.style.setProperty('--avenirY', y + 'px');
-                                window._avenirCursorState.x = x;
-                                window._avenirCursorState.y = y;
-                            } else if (window._avenirCursorState && window._avenirCursorState.x !== null && window._avenirCursorState.y !== null) {
-                                cursor.style.setProperty('--avenirX', window._avenirCursorState.x + 'px');
-                                cursor.style.setProperty('--avenirY', window._avenirCursorState.y + 'px');
-                            }
-                        }
-                    };
-
-                    if (!window._avenirCursorTimer) {
-                        window._avenirCursorTimer = setInterval(() => { 
-                            ensureStyle(); 
-                            ensureCursor(); 
-                        }, 500);
-                    }
-
-                    if (!window._avenirCursorApplyTimer) {
-                        window._avenirCursorApplyTimer = setInterval(() => {
-                            try {
-                                const cursor = document.getElementById('avenir-demo-cursor');
-                                const st = window._avenirCursorState;
-                                if (cursor && !window._avenirCursorHidden) {
-                                    applyBaseStyle(cursor);
-                                    if (st && st.x !== null && st.y !== null) {
-                                        cursor.style.setProperty('--avenirX', st.x + 'px');
-                                        cursor.style.setProperty('--avenirY', st.y + 'px');
-                                    }
-                                }
-                            } catch (e) {}
-                        }, 250);
-                    }
-                }
+                
+                if (!window.updateAvenirCursor) {{
+                    const s = document.createElement('script');
+                    s.textContent = `{init_js}`;
+                    (document.head || document.documentElement).appendChild(s);
+                    s.remove();
+                }}
 
                 let x = null, y = null;
-                if (data.target_coords) {
-                    if (Array.isArray(data.target_coords) && data.target_coords.length >= 2) {
-                        x = data.target_coords[0];
-                        y = data.target_coords[1];
-                    } else if (typeof data.target_coords === 'object' && 'x' in data.target_coords && 'y' in data.target_coords) {
-                        x = data.target_coords.x;
-                        y = data.target_coords.y;
-                    }
-                }
+                if (data.target_coords) {{
+                    if (Array.isArray(data.target_coords) && data.target_coords.length >= 2) {{
+                        x = data.target_coords[0]; y = data.target_coords[1];
+                    }} else if (typeof data.target_coords === 'object' && 'x' in data.target_coords && 'y' in data.target_coords) {{
+                        x = data.target_coords.x; y = data.target_coords.y;
+                    }}
+                }}
 
-                // If current action is CLICK, trigger a ripple effect and temporary executing state
-                try {
-                    const act = (data.action || '').toString().toUpperCase();
-                    if (act === 'CLICK') {
-                        const cursor = document.getElementById('avenir-demo-cursor');
-                        if (cursor) {
-                            cursor.classList.add('status-executing');
-                            if (x !== null && y !== null) {
-                                const r = document.createElement('div');
-                                r.className = 'avenir-click-ripple';
-                                r.style.left = (x - 12) + 'px';
-                                r.style.top = (y - 12) + 'px';
-                                (document.documentElement || document.body).appendChild(r);
-                                setTimeout(() => { try { r.remove(); } catch (e) {} }, 700);
-                            }
-                            if (window._avenirExecTimer) { clearTimeout(window._avenirExecTimer); }
-                            window._avenirExecTimer = setTimeout(() => {
-                                try { cursor.classList.remove('status-executing'); } catch (e) {}
-                            }, 550);
-                        }
-                    }
-                } catch (e) {}
-
-                if (window.updateAvenirCursor) {
-                    window.updateAvenirCursor(x, y);
-                }
-            } catch (e) {
-                console.error("Avenir Cursor Error:", e);
-            }
-        }""", data)
+                if (window.updateAvenirCursor) {{
+                    window.updateAvenirCursor(x, y, data.action, data.status);
+                }}
+            }} catch (e) {{ console.error("Avenir Chroma Error:", e); }}
+        }}""", data)
 
     def _build_cursor_init_script(self):
         return """
-            (() => {
+            (function() {
                 if (window.self !== window.top) return;
+                if (window._avenirCursorRunning) return;
+                window._avenirCursorRunning = true;
+                
                 window._avenirCursorState = window._avenirCursorState || { x: null, y: null };
-                window._avenirCursorHidden = false;
-
-                function ensureStyle() {
-                    if (document.getElementById('avenir-demo-cursor-style')) return;
-                    const style = document.createElement('style');
-                    style.id = 'avenir-demo-cursor-style';
-                    style.textContent = `
-                        #avenir-demo-cursor {
-                            position: fixed !important;
-                            width: 32px !important;
-                            height: 32px !important;
-                            z-index: 99999999999 !important;
-                            pointer-events: none !important;
-                            border: none !important;
-                            padding: 0 !important;
-                            margin: 0 !important;
-                            background: transparent !important;
-                            background-color: transparent !important;
-                            box-shadow: none !important;
-                            overflow: visible !important;
-                            backdrop-filter: none !important;
-                            outline: none !important;
-                            left: 0 !important;
-                            top: 0 !important;
-                            transform: translate3d(var(--avenirX, 50vw), var(--avenirY, 50vh), 0) translate(-16px, -16px) !important;
-                            will-change: transform !important;
-                            transition: transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1) !important;
-                            display: block !important;
-                            opacity: 1 !important;
-                            visibility: visible !important;
-                        }
-                        #avenir-demo-cursor.avenir-cursor-hidden {
-                            display: none !important;
-                            opacity: 0 !important;
-                            visibility: hidden !important;
-                        }
-                        #avenir-demo-cursor .avenir-cursor-icon {
-                            width: 100% !important;
-                            height: 100% !important;
-                            /* 增强版能量光纤光晕：白芯+多色弥散 */
-                            filter: drop-shadow(0 0 2px #ffffff) drop-shadow(0 0 8px #00f2ff) drop-shadow(0 0 15px #7000ff) !important;
-                            transform: rotate(-90deg) !important; /* 精准 45 度指向左上 */
-                            animation: avenirRainbowGlow 4s linear infinite, avenirBreathing 3s ease-in-out infinite, avenirThinkingJitter 8s ease-in-out infinite, avenirGlowFlicker 2s ease-in-out infinite !important;
-                        }
-                        #avenir-demo-cursor .avenir-cursor-icon path {
-                            fill: #000000 !important; /* 纯黑机身，反衬强光 */
-                            stroke: rgba(255, 255, 255, 0.8) !important;
-                            stroke-width: 1.2px !important;
-                            stroke-linejoin: round !important;
-                            stroke-dasharray: 40 !important; /* 能量流动感 */
-                            animation: avenirEnergyFlow 2s linear infinite !important;
-                            transition: all 0.3s ease !important;
-                        }
-                        .avenir-click-ripple {
-                            position: fixed !important;
-                            width: 24px !important;
-                            height: 24px !important;
-                            border-radius: 50% !important;
-                            border: 2px solid rgba(255, 255, 255, 0.95) !important;
-                            box-shadow: 0 0 8px #00f2ff, 0 0 14px #7000ff !important;
-                            pointer-events: none !important;
-                            z-index: 99999999999 !important;
-                            transform-origin: center center !important;
-                            animation: avenirClickRipple 600ms ease-out forwards !important;
-                            background: transparent !important;
-                        }
-                        @keyframes avenirBreathing {
-                            0%, 100% { transform: rotate(-90deg) scale(1); }
-                            50% { transform: rotate(-90deg) scale(1.1); }
-                        }
-                        @keyframes avenirThinkingJitter {
-                            0%, 100% { margin: 0px 0px; }
-                            20% { margin: -1px 1.5px; }
-                            40% { margin: 1.5px -1px; }
-                            60% { margin: -1.5px 1px; }
-                            80% { margin: 1px -1.5px; }
-                        }
-                        @keyframes avenirGlowFlicker {
-                            0%, 100% { opacity: 1; }
-                            50% { opacity: 0.85; }
-                        }
-                        @keyframes avenirEnergyFlow {
-                            0% { stroke-dashoffset: 80; }
-                            100% { stroke-dashoffset: 0; }
-                        }
-                        @keyframes avenirRainbowGlow {
-                            0% { filter: drop-shadow(0 0 2px #ffffff) drop-shadow(0 0 8px #00f2ff) drop-shadow(0 0 15px #7000ff) hue-rotate(0deg); }
-                            50% { filter: drop-shadow(0 0 3px #ffffff) drop-shadow(0 0 10px #00f2ff) drop-shadow(0 0 20px #7000ff) hue-rotate(180deg); }
-                            100% { filter: drop-shadow(0 0 2px #ffffff) drop-shadow(0 0 8px #00f2ff) drop-shadow(0 0 15px #7000ff) hue-rotate(360deg); }
-                        }
-                        /* Action States - Click Effect */
-                        #avenir-demo-cursor.status-executing .avenir-cursor-icon {
-                            animation: avenirRainbowGlow 0.5s linear infinite, avenirClickImpact 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards !important;
-                        }
-                        #avenir-demo-cursor.status-executing .avenir-cursor-icon path {
-                            fill: #ffffff !important;
-                            stroke: #000000 !important;
-                            stroke-dasharray: none !important;
-                        }
-                        @keyframes avenirClickImpact {
-                            0% { transform: rotate(-90deg) scale(1); filter: brightness(1); }
-                            20% { transform: rotate(-90deg) scale(1.6); filter: brightness(2) drop-shadow(0 0 20px #ffffff); }
-                            100% { transform: rotate(-90deg) scale(1.2); filter: brightness(1.2) drop-shadow(0 0 10px #ffffff); }
-                        }
-                        @keyframes avenirClickRipple {
-                            0% { transform: scale(0.5); opacity: 0.95; }
-                            70% { transform: scale(1.5); opacity: 0.4; }
-                            100% { transform: scale(2); opacity: 0; }
-                        }
-                    `;
-                    (document.head || document.documentElement).appendChild(style);
-                }
-
-                function applyBaseStyle(cursor) {
-                    try {
-                        cursor.style.setProperty('position', 'fixed', 'important');
-                        cursor.style.setProperty('width', '32px', 'important');
-                        cursor.style.setProperty('height', '32px', 'important');
-                        cursor.style.setProperty('z-index', '99999999999', 'important');
-                        cursor.style.setProperty('pointer-events', 'none', 'important');
-                        if (!window._avenirCursorHidden) {
-                            cursor.style.setProperty('display', 'block', 'important');
-                            cursor.style.setProperty('opacity', '1', 'important');
-                            cursor.style.setProperty('visibility', 'visible', 'important');
-                        }
-                        cursor.style.setProperty('left', '0', 'important');
-                        cursor.style.setProperty('top', '0', 'important');
-                        cursor.style.setProperty('transform', 'translate3d(var(--avenirX, 50vw), var(--avenirY, 50vh), 0) translate(-16px, -16px)', 'important');
-                        cursor.style.setProperty('will-change', 'transform', 'important');
-                        cursor.style.setProperty('transition', 'transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1)', 'important');
-                    } catch (e) {}
-                }
-
+                
                 function ensureCursor() {
-                    let cursor = document.getElementById('avenir-demo-cursor');
-                    const root = document.documentElement || document.body;
-                    if (!cursor) {
-                        cursor = document.createElement('div');
-                        cursor.id = 'avenir-demo-cursor';
-                        try { cursor.setAttribute('popover', 'manual'); } catch (e) {}
-                        cursor.innerHTML = `
-                            <svg class="avenir-cursor-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                <path d="M21 3L3 10.5L11.5 13L14 21.5L21 3Z" />
-                            </svg>
-                        `;
-                        root.appendChild(cursor);
-                        if (typeof cursor.showPopover === 'function') { try { cursor.showPopover(); } catch (e) {} }
-                    } else if (cursor.parentElement && cursor.parentElement.lastElementChild !== cursor) {
-                        // 强制置顶：如果不是最后一个元素，则移动到末尾
-                        cursor.parentElement.appendChild(cursor);
-                        if (typeof cursor.showPopover === 'function') { try { cursor.showPopover(); } catch (e) {} }
+                    const hosts = document.querySelectorAll('#avenir-cursor-host');
+                    if (hosts.length > 1) {
+                        for (let i = 0; i < hosts.length - 1; i++) hosts[i].remove();
                     }
                     
-                    if (window._avenirCursorHidden) {
-                        cursor.classList.add('avenir-cursor-hidden');
-                    } else {
-                        cursor.classList.remove('avenir-cursor-hidden');
-                        applyBaseStyle(cursor);
-                    }
-                    return cursor;
-                }
-
-                if (document.readyState === 'loading') {
-                    document.addEventListener('DOMContentLoaded', () => { ensureStyle(); ensureCursor(); });
-                } else {
-                    ensureStyle();
-                    ensureCursor();
-                }
-
-                if (!window._avenirCursorTimer) {
-                    window._avenirCursorTimer = setInterval(() => { ensureStyle(); ensureCursor(); }, 500);
-                }
-
-                window.updateAvenirCursor = (x, y) => {
-                    ensureStyle();
-                    const cursor = ensureCursor();
-                    if (cursor) {
-                        if (x !== null && y !== null) {
-                            cursor.style.setProperty('--avenirX', x + 'px');
-                            cursor.style.setProperty('--avenirY', y + 'px');
-                            window._avenirCursorState.x = x;
-                            window._avenirCursorState.y = y;
-                        } else if (window._avenirCursorState && window._avenirCursorState.x !== null && window._avenirCursorState.y !== null) {
-                            cursor.style.setProperty('--avenirX', window._avenirCursorState.x + 'px');
-                            cursor.style.setProperty('--avenirY', window._avenirCursorState.y + 'px');
+                    let host = document.getElementById('avenir-cursor-host');
+                    if (!host) {
+                        host = document.createElement('div');
+                        host.id = 'avenir-cursor-host';
+                        host.setAttribute('popover', 'manual');
+                        // Ensure Host is completely transparent to events and matches previous state immediately
+                        const savedX = window._avenirCursorState.x !== null ? window._avenirCursorState.x + 'px' : '50vw';
+                        const savedY = window._avenirCursorState.y !== null ? window._avenirCursorState.y + 'px' : '50vh';
+                        
+                        host.style.cssText = `all:unset !important;position:fixed !important;top:0 !important;left:0 !important;width:0 !important;height:0 !important;z-index:2147483647 !important;pointer-events:none !important;background:none !important;border:none !important;margin:0 !important;padding:0 !important;overflow:visible !important;display:block !important;`;
+                        (document.documentElement || document.body).appendChild(host);
+                        
+                        try { host.showPopover(); } catch (e) { }
+                        
+                        const shadow = host.attachShadow({mode: 'open'});
+                        const container = document.createElement('div');
+                        container.id = 'cursor-chroma-container';
+                        shadow.appendChild(container);
+                        
+                        const style = document.createElement('style');
+                        style.textContent = `
+                            #cursor-chroma-container { position: absolute; pointer-events: none !important; }
+                            #avenir-demo-cursor {
+                                position: fixed !important;
+                                width: 28px !important;
+                                height: 32px !important;
+                                left: 0 !important;
+                                top: 0 !important;
+                                display: block !important;
+                                transform: translate3d(var(--x, ${savedX}), var(--y, ${savedY}), 0) scale(var(--s, 1)) !important;
+                                will-change: transform;
+                                transition: transform 500ms cubic-bezier(0.23, 1, 0.32, 1);
+                                z-index: 2147483647;
+                                pointer-events: none !important;
+                                filter: drop-shadow(0 0 1px rgba(0,0,0,0.5)) 
+                                        drop-shadow(0 2px 4px rgba(0,0,0,0.3))
+                                        drop-shadow(0 0 4px rgba(99, 102, 241, 0.7)) /* Indigo Bloom */
+                                        drop-shadow(0 0 8px rgba(20, 184, 166, 0.5)); /* Teal Bloom */
+                            }
+                            #avenir-demo-cursor::after {
+                                content: ''; position: absolute; top: -20px; left: -20px; right: -20px; bottom: -20px;
+                                background: radial-gradient(circle, 
+                                    rgba(71, 85, 105, 0.35) 0%, 
+                                    rgba(45, 90, 90, 0.2) 40%, 
+                                    transparent 80%);
+                                border-radius: 50%; z-index: -1; 
+                                animation: chromaAura 10s ease-in-out infinite;
+                                filter: blur(8px);
+                                pointer-events: none !important;
+                            }
+                            .icon-svg { 
+                                display: block; width: 100%; height: 100%; 
+                                overflow: visible;
+                                pointer-events: none !important;
+                            }
+                            .unified-shell { 
+                                fill: url(#chromaLiquid);
+                                stroke: rgba(0,0,0,0.5); /* High-contrast core shell */
+                                stroke-width: 0.8px;
+                                stroke-linejoin: round;
+                                pointer-events: none !important;
+                            }
+                            @keyframes chromaAura { 0%,100% { transform: scale(0.9); opacity: 0.3; } 50% { transform: scale(1.3); opacity: 0.6; } }
+                            @keyframes liquidShift {
+                                0% { stop-color: #FFFFFF; }
+                                25% { stop-color: #F8FAFC; }
+                                50% { stop-color: #E2E8F0; } /* Muted Slate */
+                                75% { stop-color: #F1F5F9; }
+                                100% { stop-color: #FFFFFF; }
+                            }
+                            @keyframes colorCycle {
+                                0% { stop-color: #FFFFFF; }
+                                50% { stop-color: #BAE6FD; } /* Light Sky Blue Bloom */
+                                100% { stop-color: #FFFFFF; }
+                            }
+                            .stop-chroma-1 { animation: liquidShift 8s ease-in-out infinite; }
+                            .stop-chroma-2 { animation: colorCycle 12s ease-in-out infinite alternate; }
+                        `;
+                        shadow.appendChild(style);
+                        
+                        const cursor = document.createElement('div');
+                        cursor.id = 'avenir-demo-cursor';
+                        cursor.innerHTML = `
+                            <svg class="icon-svg" viewBox="0 0 28 32" preserveAspectRatio="xMinYMin meet">
+                                <defs>
+                                    <linearGradient id="chromaLiquid" x1="0%" y1="0%" x2="100%" y2="100%">
+                                        <stop class="stop-chroma-1" offset="0%" />
+                                        <stop class="stop-chroma-2" offset="100%" />
+                                    </linearGradient>
+                                </defs>
+                                <path class="unified-shell" d="M0 0 L26 10 L15 15 L10 26 Z"/>
+                            </svg>
+                        `;
+                        container.appendChild(cursor);
+                        
+                        // Seed properties from state to prevent jumping on first render
+                        if (window._avenirCursorState.x !== null) {
+                            cursor.style.setProperty('--x', window._avenirCursorState.x + 'px');
+                            cursor.style.setProperty('--y', window._avenirCursorState.y + 'px');
                         }
                     }
-                };
-
-                if (!window._avenirCursorApplyTimer) {
-                    window._avenirCursorApplyTimer = setInterval(() => {
-                        try {
-                            const cursor = document.getElementById('avenir-demo-cursor');
-                            const st = window._avenirCursorState;
-                            if (cursor && !window._avenirCursorHidden) {
-                                applyBaseStyle(cursor);
-                                if (st && st.x !== null && st.y !== null) {
-                                    cursor.style.setProperty('--avenirX', st.x + 'px');
-                                    cursor.style.setProperty('--avenirY', st.y + 'px');
-                                }
-                            }
-                        } catch (e) {}
-                    }, 250);
+                    
+                    if (host && host.matches(':not(:open)')) {
+                        try { host.showPopover(); } catch(e) {}
+                    }
+                    
+                    return host.shadowRoot.getElementById('avenir-demo-cursor');
                 }
+
+                window.updateAvenirCursor = (x, y, action, status) => {
+                    const cursor = ensureCursor();
+                    if (!cursor) return;
+                    if (x !== null && y !== null) {
+                        cursor.style.setProperty('--x', x + 'px');
+                        cursor.style.setProperty('--y', y + 'px');
+                        window._avenirCursorState.x = x;
+                        window._avenirCursorState.y = y;
+                    }
+                    if ((action || '').toString().toUpperCase() === 'CLICK') {
+                        cursor.style.setProperty('--s', '0.8');
+                        setTimeout(() => cursor.style.setProperty('--s', '1'), 300);
+                    }
+                };
+                
+                ensureCursor();
+                setInterval(ensureCursor, 1000);
             })();
         """
 
@@ -1244,7 +947,10 @@ class AvenirWebAgent:
         if self.config.get('browser', {}).get('mode') == 'demo':
             async def _handle_load(p):
                 try:
-                    await asyncio.sleep(1.0)
+                    # Check if page is still the active one before updating
+                    if hasattr(self, 'page') and p != self.page:
+                        return
+                    await asyncio.sleep(0.1)
                     await self._update_demo_overlay(status="READY")
                 except Exception:
                     pass
@@ -2267,7 +1973,7 @@ class AvenirWebAgent:
             logger=self.logger,
         )
 
-        if isinstance(action_type, str) and action_type in ["CLICK", "TYPE", "SELECT", "KEYBOARD", "PRESS ENTER"] and not action_successful:
+        if isinstance(action_type, str) and action_type in ["TYPE", "SELECT", "KEYBOARD", "PRESS ENTER"] and not action_successful:
             try:
                 self._last_changes_detected = list(changes_detected)
                 self._last_action_successful = False

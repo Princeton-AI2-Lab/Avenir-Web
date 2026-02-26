@@ -466,9 +466,10 @@ def detect_page_state_change(state_before: Any, state_after: Any, action_type: A
         except Exception:
             pass
 
-        evidence = changes_detected
         if isinstance(action_type, str) and action_type == "CLICK":
-            evidence = [c for c in changes_detected if c != "focus_blur"]
+            return True, changes_detected
+        
+        evidence = changes_detected
         action_successful = len(evidence) > 0
 
         if isinstance(action_type, str) and action_type in ["SCROLL UP", "SCROLL DOWN", "SCROLL TOP", "SCROLL BOTTOM"]:
