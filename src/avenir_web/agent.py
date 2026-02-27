@@ -724,15 +724,38 @@ class AvenirWebAgent:
                                 left: 0 !important;
                                 top: 0 !important;
                                 display: block !important;
-                                transform: translate3d(var(--x, ${savedX}), var(--y, ${savedY}), 0) scale(var(--s, 1)) !important;
+                                transform: translate3d(var(--x, ${savedX}), var(--y, ${savedY}), 0) scale(var(--s, 1)) rotate(var(--r, 0deg)) !important;
                                 will-change: transform;
-                                transition: transform 500ms cubic-bezier(0.23, 1, 0.32, 1);
+                                transition: transform 450ms cubic-bezier(0.16, 1, 0.3, 1);
                                 z-index: 2147483647;
                                 pointer-events: none !important;
                                 filter: drop-shadow(0 0 1px rgba(0,0,0,0.5)) 
                                         drop-shadow(0 2px 4px rgba(0,0,0,0.3))
-                                        drop-shadow(0 0 4px rgba(99, 102, 241, 0.7)) /* Indigo Bloom */
-                                        drop-shadow(0 0 8px rgba(20, 184, 166, 0.5)); /* Teal Bloom */
+                                        drop-shadow(0 0 4px rgba(99, 102, 241, 0.8)) /* Indigo Bloom */
+                                        drop-shadow(0 0 8px rgba(20, 184, 166, 0.6)); /* Teal Bloom */
+                            }
+                            #avenir-demo-cursor.clicking {
+                                animation: avenirClickImpact 400ms cubic-bezier(0.175, 0.885, 0.32, 1.275);
+                            }
+                            @keyframes avenirClickImpact {
+                                0% { transform: translate3d(var(--x), var(--y), 0) scale(1) rotate(0deg); }
+                                30% { transform: translate3d(var(--x), var(--y), 0) scale(0.7) rotate(-10deg); filter: brightness(1.5) drop-shadow(0 0 15px #ffffff); }
+                                100% { transform: translate3d(var(--x), var(--y), 0) scale(1) rotate(0deg); }
+                            }
+                            .avenir-ripple {
+                                position: fixed !important;
+                                top: 0; left: 0;
+                                width: 40px; height: 40px;
+                                margin-top: -20px; margin-left: -20px;
+                                border-radius: 50%;
+                                background: radial-gradient(circle, rgba(255,255,255,0.8) 0%, rgba(99, 102, 241, 0.4) 40%, transparent 70%);
+                                pointer-events: none !important;
+                                z-index: 2147483646;
+                                animation: avenirRippleEffect 600ms ease-out forwards;
+                            }
+                            @keyframes avenirRippleEffect {
+                                0% { transform: scale(0.2); opacity: 1; }
+                                100% { transform: scale(2.5); opacity: 0; }
                             }
                             #avenir-demo-cursor::after {
                                 content: ''; position: absolute; top: -20px; left: -20px; right: -20px; bottom: -20px;
@@ -807,15 +830,34 @@ class AvenirWebAgent:
                 window.updateAvenirCursor = (x, y, action, status) => {
                     const cursor = ensureCursor();
                     if (!cursor) return;
+                    
                     if (x !== null && y !== null) {
                         cursor.style.setProperty('--x', x + 'px');
                         cursor.style.setProperty('--y', y + 'px');
                         window._avenirCursorState.x = x;
                         window._avenirCursorState.y = y;
                     }
-                    if ((action || '').toString().toUpperCase() === 'CLICK') {
-                        cursor.style.setProperty('--s', '0.8');
-                        setTimeout(() => cursor.style.setProperty('--s', '1'), 300);
+                    
+                    const act = (action || '').toString().toUpperCase();
+                    if (act === 'CLICK' || act === 'PRESS ENTER' || act === 'ENTER') {
+                        // 1. Impact Animation on Cursor
+                        cursor.classList.remove('clicking');
+                        void cursor.offsetWidth; // Force reflow
+                        cursor.classList.add('clicking');
+                        
+                        // 2. Spawn Ripple
+                        const ripple = document.createElement('div');
+                        ripple.className = 'avenir-ripple';
+                        const rx = x !== null ? x : window._avenirCursorState.x;
+                        const ry = y !== null ? y : window._avenirCursorState.y;
+                        ripple.style.transform = `translate3d(${rx}px, ${ry}px, 0)`;
+                        
+                        const host = document.getElementById('avenir-cursor-host');
+                        if (host && host.shadowRoot) {
+                            const container = host.shadowRoot.getElementById('cursor-chroma-container');
+                            if (container) container.appendChild(ripple);
+                        }
+                        setTimeout(() => ripple.remove(), 650);
                     }
                 };
                 

@@ -40,7 +40,8 @@ async def capture_page_state(page: Any, *, pending_hit_test_coords: Optional[Seq
             return state
 
         try:
-            await page.wait_for_load_state("domcontentloaded", timeout=10000)
+            # Reduce timeout to 2s to prevent long hangs on unstable pages
+            await page.wait_for_load_state("domcontentloaded", timeout=2000)
         except Exception:
             pass
 
@@ -54,185 +55,125 @@ async def capture_page_state(page: Any, *, pending_hit_test_coords: Optional[Seq
         except Exception:
             state["title"] = ""
 
-        visible_text = await page.evaluate(
+        # Optimized: Combine all DOM-related captures into a single evaluate call to reduce IPC overhead
+        hx, hy = (None, None)
+        if isinstance(pending_hit_test_coords, (list, tuple)) and len(pending_hit_test_coords) >= 2:
+            hx, hy = int(pending_hit_test_coords[0]), int(pending_hit_test_coords[1])
+
+        dom_state = await page.evaluate(
             """
-            () => {
+            ([hx, hy]) => {
+                const results = {
+                    visible_text: '',
+                    interactive_elements_count: 0,
+                    form_fields_count: 0,
+                    modal_present: false,
+                    scroll_x: window.scrollX || 0,
+                    scroll_y: window.scrollY || 0,
+                    active_element: null,
+                    hit_target: null
+                };
+
                 const root = document.body || document.documentElement;
-                if (!root) { return ''; }
-                let walker;
+                if (!root) return results;
+
+                // 1. Capture Visible Text (TreeWalker is efficient but can be slow on huge DOMs)
                 try {
-                    walker = document.createTreeWalker(
+                    const walker = document.createTreeWalker(
                         root,
                         NodeFilter.SHOW_TEXT,
                         {
                             acceptNode: function(node) {
                                 const parent = node.parentElement;
                                 if (!parent) return NodeFilter.FILTER_REJECT;
-
                                 const style = window.getComputedStyle(parent);
-                                if (style.display === 'none' ||
-                                    style.visibility === 'hidden' ||
-                                    style.opacity === '0') {
+                                if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
                                     return NodeFilter.FILTER_REJECT;
                                 }
-
                                 return NodeFilter.FILTER_ACCEPT;
                             }
                         }
                     );
-                } catch (e) {
-                    return '';
-                }
+                    let text = '';
+                    let node;
+                    while ((node = walker.nextNode()) && text.length < 1000) {
+                        text += node.textContent.trim() + ' ';
+                    }
+                    results.visible_text = text.trim().slice(0, 1000);
+                } catch (e) {}
 
-                let text = '';
-                let node;
-                while (node = walker.nextNode()) {
-                    text += node.textContent.trim() + ' ';
-                    if (text.length > 1000) break;
-                }
-                return text.trim();
-            }
-            """
-        )
-        state["visible_text"] = visible_text[:1000] if visible_text else ""
-
-        interactive_count = await page.evaluate(
-            """
-            () => {
-                const interactiveElements = document.querySelectorAll(
-                    'button, input, select, textarea, a[href], [onclick], [role="button"]'
-                );
-                return interactiveElements.length;
-            }
-            """
-        )
-        state["interactive_elements_count"] = interactive_count
-
-        form_fields_count = await page.evaluate(
-            """
-            () => {
-                const formFields = document.querySelectorAll('input, select, textarea');
-                return formFields.length;
-            }
-            """
-        )
-        state["form_fields_count"] = form_fields_count
-
-        modal_present = await page.evaluate(
-            """
-            () => {
-                const modals = document.querySelectorAll(
-                    '[role="dialog"], .modal, .popup, .overlay, [aria-modal="true"]'
-                );
-                return modals.length > 0;
-            }
-            """
-        )
-        state["modal_present"] = modal_present
-
-        focus_state = await page.evaluate(
-            """
-            () => {
-                const sx = window.scrollX || 0;
-                const sy = window.scrollY || 0;
-                const ae = document.activeElement;
-                let active = null;
+                // 2. Element Counts
                 try {
+                    results.interactive_elements_count = document.querySelectorAll(
+                        'button, input, select, textarea, a[href], [onclick], [role="button"]'
+                    ).length;
+                    results.form_fields_count = document.querySelectorAll('input, select, textarea').length;
+                    results.modal_present = document.querySelectorAll(
+                        '[role="dialog"], .modal, .popup, .overlay, [aria-modal="true"]'
+                    ).length > 0;
+                } catch (e) {}
+
+                // 3. Active Element State
+                try {
+                    const ae = document.activeElement;
                     if (ae && ae !== document.body) {
                         const tag = (ae.tagName || '').toUpperCase();
-                        const val = (typeof ae.value === 'string') ? ae.value : '';
                         let selectedText = '';
                         let selectedIndex = null;
                         if (tag === 'SELECT') {
-                            selectedIndex = typeof ae.selectedIndex === 'number' ? ae.selectedIndex : null;
-                            try {
-                                const opt = ae.selectedOptions && ae.selectedOptions.length ? ae.selectedOptions[0] : null;
-                                selectedText = opt ? (opt.textContent || '') : '';
-                            } catch (e) {
-                                selectedText = '';
-                            }
+                            selectedIndex = ae.selectedIndex;
+                            const opt = ae.selectedOptions && ae.selectedOptions[0];
+                            selectedText = opt ? (opt.textContent || '') : '';
                         }
-                        active = {
+                        results.active_element = {
                             tag,
                             id: ae.id || '',
-                            name: ae.getAttribute && ae.getAttribute('name') ? ae.getAttribute('name') : '',
-                            type: ae.getAttribute && ae.getAttribute('type') ? ae.getAttribute('type') : '',
-                            role: ae.getAttribute && ae.getAttribute('role') ? ae.getAttribute('role') : '',
-                            placeholder: ae.getAttribute && ae.getAttribute('placeholder') ? ae.getAttribute('placeholder') : '',
-                            ariaLabel: ae.getAttribute && ae.getAttribute('aria-label') ? ae.getAttribute('aria-label') : '',
-                            value: (val || '').slice(0, 200),
-                            selectedText: (selectedText || '').slice(0, 200),
+                            name: ae.getAttribute('name') || '',
+                            type: ae.getAttribute('type') || '',
+                            role: ae.getAttribute('role') || '',
+                            placeholder: ae.getAttribute('placeholder') || '',
+                            ariaLabel: ae.getAttribute('aria-label') || '',
+                            value: (ae.value || '').slice(0, 200),
+                            selectedText: selectedText.slice(0, 200),
                             selectedIndex
                         };
                     }
-                } catch (e) {
-                    active = null;
-                }
-                return { sx, sy, active };
-            }
-            """
-        )
-        if isinstance(focus_state, dict):
-            try:
-                state["scroll_x"] = int(focus_state.get("sx", 0) or 0)
-            except Exception:
-                state["scroll_x"] = 0
-            try:
-                state["scroll_y"] = int(focus_state.get("sy", 0) or 0)
-            except Exception:
-                state["scroll_y"] = 0
-            state["active_element"] = focus_state.get("active")
+                } catch (e) {}
 
-        coords = pending_hit_test_coords
-        if isinstance(coords, (list, tuple)) and len(coords) >= 2:
-            try:
-                hx, hy = int(coords[0]), int(coords[1])
-                hit_state = await page.evaluate(
-                    """
-                    ([x, y]) => {
-                        try {
-                            const el = document.elementFromPoint(x, y);
-                            if (!el) return null;
+                // 4. Hit Target Information
+                if (hx !== null && hy !== null) {
+                    try {
+                        const el = document.elementFromPoint(hx, hy);
+                        if (el) {
                             const r = el.getBoundingClientRect();
-                            const tag = (el.tagName || '').toUpperCase();
-                            const txt = (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 200);
-                            const ariaLabel = (el.getAttribute && el.getAttribute('aria-label')) ? el.getAttribute('aria-label') : '';
-                            const role = (el.getAttribute && el.getAttribute('role')) ? el.getAttribute('role') : '';
-                            const href = (el.getAttribute && el.getAttribute('href')) ? el.getAttribute('href') : '';
-                            const disabled = (typeof el.disabled === 'boolean') ? el.disabled : (el.getAttribute && el.getAttribute('aria-disabled') === 'true');
-                            const ariaPressed = (el.getAttribute && el.getAttribute('aria-pressed')) ? el.getAttribute('aria-pressed') : '';
-                            const ariaExpanded = (el.getAttribute && el.getAttribute('aria-expanded')) ? el.getAttribute('aria-expanded') : '';
-                            const type = (el.getAttribute && el.getAttribute('type')) ? el.getAttribute('type') : '';
-                            const value = (typeof el.value === 'string') ? el.value.slice(0, 200) : '';
-                            return {
-                                x,
-                                y,
-                                tag,
+                            results.hit_target = {
+                                x: hx, y: hy,
+                                tag: (el.tagName || '').toUpperCase(),
                                 id: el.id || '',
-                                name: (el.getAttribute && el.getAttribute('name')) ? el.getAttribute('name') : '',
-                                className: (el.className && typeof el.className === 'string') ? el.className.slice(0, 200) : '',
-                                role,
-                                ariaLabel,
-                                href,
-                                disabled,
-                                ariaPressed,
-                                ariaExpanded,
-                                type,
-                                value,
-                                text: txt,
+                                name: el.getAttribute('name') || '',
+                                className: (typeof el.className === 'string' ? el.className : '').slice(0, 200),
+                                role: el.getAttribute('role') || '',
+                                ariaLabel: el.getAttribute('aria-label') || '',
+                                href: el.getAttribute('href') || '',
+                                disabled: !!el.disabled || el.getAttribute('aria-disabled') === 'true',
+                                ariaPressed: el.getAttribute('aria-pressed') || '',
+                                ariaExpanded: el.getAttribute('aria-expanded') || '',
+                                type: el.getAttribute('type') || '',
+                                value: (typeof el.value === 'string' ? el.value : '').slice(0, 200),
+                                text: (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 200),
                                 rect: { left: r.left, top: r.top, width: r.width, height: r.height }
                             };
-                        } catch (e) {
-                            return null;
                         }
-                    }
-                    """,
-                    [hx, hy],
-                )
-                state["hit_target"] = hit_state
-            except Exception:
-                state["hit_target"] = None
+                    } catch (e) {}
+                }
 
+                return results;
+            }
+            """,
+            [hx, hy]
+        )
+
+        state.update(dom_state)
         return state
     except Exception as e:
         if logger is not None:

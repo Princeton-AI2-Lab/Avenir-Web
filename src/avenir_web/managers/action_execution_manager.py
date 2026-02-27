@@ -315,15 +315,29 @@ class ActionExecutionManager:
 
     async def _perform_press_enter(self, selector, element_repr, page):
         try:
-            # Try to find focused element
+            # 1. Try to use selector if provided (most reliable)
+            if selector:
+                try:
+                    await page.locator(selector).press("Enter", delay=50)
+                    self.logger.info(f"Pressed Enter on selector: {selector}")
+                    return f"SUCCESS: Pressed Enter on {element_repr or selector}"
+                except Exception:
+                    pass
+
+            # 2. Try to find focused element
             focused_element = await page.evaluate("() => document.activeElement ? document.activeElement.tagName : null")
             if focused_element:
                 self.logger.info(f"Pressed Enter on focused {focused_element}")
-                await page.keyboard.press('Enter')
+                await page.keyboard.press('Enter', delay=50)
                 return f"SUCCESS: Pressed Enter on focused {focused_element}"
             
-            # Fallback global
-            await page.keyboard.press('Enter')
+            # 3. Fallback global
+            await page.keyboard.press('Enter', delay=50)
+            # Explicitly blur to clear any "held" visual state
+            try:
+                await page.evaluate("() => { if(document.activeElement) document.activeElement.blur(); }")
+            except:
+                pass
             return "SUCCESS: Pressed Enter globally"
         except Exception as e:
             self.logger.error(f"PRESS ENTER failed: {e}")
@@ -431,15 +445,40 @@ class ActionExecutionManager:
 
     async def _clear_active_field(self, page):
         try:
-            if sys.platform == "darwin":
-                try: await page.keyboard.press("Meta+A")
-                except: pass
-            else:
-                try: await page.keyboard.press("Control+A")
-                except: pass
-            try: await page.keyboard.press("Backspace")
-            except: pass
-        except: pass
+            # 1. Check if the focused element is actually an input/textarea/editable
+            is_typeable = await page.evaluate("""
+                () => {
+                    const ae = document.activeElement;
+                    if (!ae || ae === document.body) return false;
+                    const tag = ae.tagName.toUpperCase();
+                    return (tag === 'INPUT' || tag === 'TEXTAREA' || ae.isContentEditable || ae.getAttribute('role') === 'textbox');
+                }
+            """)
+            
+            if not is_typeable:
+                self.logger.debug("Skipping field clear: no typeable element focused")
+                return
+
+            # 2. Try to clear using JavaScript first (fast and safe)
+            await page.evaluate("""
+                () => {
+                    const ae = document.activeElement;
+                    if (!ae) return;
+                    if (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA') {
+                        ae.value = '';
+                    } else if (ae.isContentEditable) {
+                        ae.innerText = '';
+                    }
+                    ae.dispatchEvent(new Event('input', { bubbles: true }));
+                    ae.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            """)
+
+            # 3. Fallback to keyboard selection ONLY if still not empty
+            # But use a more targeted approach: triple click or Ctrl+A only if we're sure
+            # For now, JS clearing is much safer to avoid the "select all" bug.
+        except Exception as e:
+            self.logger.warning(f"Failed to clear active field: {e}")
 
     async def _perform_type(self, target_coordinates, value, field_name, tasks, page, *, clear_first: bool = True, press_enter_after: bool = False):
         try:
@@ -470,7 +509,7 @@ class ActionExecutionManager:
             # 4. Optionally press Enter
             if press_enter_after:
                 try:
-                    await page.keyboard.press("Enter")
+                    await page.keyboard.press("Enter", delay=50)
                     self.logger.info("Pressed Enter after typing")
                     return f"Typed '{value}' and pressed Enter"
                 except Exception as e:
