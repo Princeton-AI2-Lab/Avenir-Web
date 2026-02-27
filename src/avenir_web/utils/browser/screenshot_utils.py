@@ -65,17 +65,21 @@ async def capture_viewport_screenshot(
     screenshot_path: str,
     *,
     logger: Any = None,
-    timeout_ms: int = 45000,
+    timeout_ms: int = 10000,
 ) -> None:
     try:
         try:
-            await page.wait_for_load_state("domcontentloaded", timeout=15000)
+            # Fast check: skip networkidle if domcontentloaded is enough for basic visual
+            await page.wait_for_load_state("domcontentloaded", timeout=3000)
         except Exception:
             pass
+        
+        # networkidle is often the culprit for "hanging" on first page load due to tracking scripts
         try:
-            await page.wait_for_load_state("networkidle", timeout=20000)
+            await page.wait_for_load_state("networkidle", timeout=2000)
         except Exception:
             pass
+            
         await page.screenshot(path=screenshot_path, timeout=timeout_ms)
     except Exception as e:
         if logger is not None:
