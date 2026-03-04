@@ -1,9 +1,9 @@
 # Avenir-Web <img src="img/icon.png" align="right" width="140">
 
-[![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE.txt) [![arXiv](https://img.shields.io/badge/arXiv-2602.02468-b31b1b.svg)](https://arxiv.org/abs/2602.02468) [![PDF](https://img.shields.io/badge/PDF-Avenir--Web-red.svg)](https://arxiv.org/pdf/2602.02468.pdf)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE.txt) [![arXiv](https://img.shields.io/badge/arXiv-2602.02468-b31b1b.svg)](https://arxiv.org/abs/2602.02468) [![PDF](https://img.shields.io/badge/PDF-Avenir--Web-red.svg)](https://arxiv.org/pdf/2602.02468.pdf) [![Demo](https://img.shields.io/badge/Demo-Mode-blueviolet.svg)](https://www.youtube.com/watch?v=X38CH0xc_sg&t=16s)
 
 Princeton AI for Accelerating Invention Lab  
-Authors: [Aiden Yiliu Li](https://yiliu.li), [Shilong Liu](https://lsl.zone)
+Authors: [Aiden Yiliu Li](https://yiliu.li), [Xinyue Hao](https://www.edinburgh-robotics.org/students/maggie-xinyue-hao), [Shilong Liu](https://lsl.zone), [Mengdi Wang](https://ece.princeton.edu/people/mengdi-wang)
 
 ## Abstract
 
@@ -60,7 +60,7 @@ python example.py --task "Find the official API docs for X" --website "https://e
 
 Avenir-Web features a specialized **Demo Mode** designed for high-quality screen recordings and live presentations. When enabled, the agent provides:
 
-- **Silky Cursor Visuals**: A GPU-accelerated, dynamic cursor overlay with tech-minimalist light effects and clear click/keypress feedback.
+- **Cursor Visuals**: A GPU-accelerated, dynamic cursor overlay with tech-minimalist light effects and clear click/keypress feedback.
 - **Real-time Dashboard**: A native GUI window synchronized with the browser, displaying the agent's current strategy, task progress, and live status.
 - **Visual Feedback**: Reaction-based animations (e.g., impact ripples, shockwaves) that make the agent's decision-making process transparent and engaging.
 
