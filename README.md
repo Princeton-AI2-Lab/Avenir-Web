@@ -9,6 +9,10 @@ Authors: [Aiden Yiliu Li](https://yiliu.li), [Xinyue Hao](https://www.edinburgh-
 
 Avenir-Web is an autonomous web agent framework designed for reliable execution of long-horizon tasks on complex, dynamic web interfaces. Addressing challenges in element grounding and long-term task tracking, it introduces a modular architecture combining Mixture of Grounding Experts (MoGE), Experience-Imitation Planning (EIP), and Adaptive Memory with Task-Tracking Checklists. This approach establishes a new open-source state-of-the-art on the Online-Mind2Web benchmark, bridging the performance gap with proprietary models in real-world deployments.
 
+## News
+
+- **2026-03-05**: Added repository-level `SKILL.md` to define the Avenir-Web agent skill workflow (mode selection, instruction design, single/batch execution, API requirements, and reporting contract).
+
 ## Installation
 
 Requirements:
@@ -54,6 +58,19 @@ From the repository root:
 ```bash
 python example.py --task "Find the official API docs for X" --website "https://example.com/"
 ```
+
+## Agent Skill (SKILL.md)
+
+This repository now includes a dedicated skill specification at [`SKILL.md`](SKILL.md).
+
+The skill defines how an agent should:
+- choose run mode (`headless`, `headed`, `demo`)
+- write high-quality task instructions
+- run single-task and batch workflows consistently
+- handle API key requirements (`OPENROUTER_API_KEY` first, TOML fallback)
+- report outcomes with evidence and next-step recommendations
+
+If you are using an agentic coding assistant that supports skills, point it to this file as the canonical operating guide for Avenir-Web runs.
 
 
 ## Demo Mode
