@@ -1,6 +1,6 @@
 # Avenir-Web <img src="img/icon.png" align="right" width="140">
 
-[![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE.txt) [![arXiv](https://img.shields.io/badge/arXiv-2602.02468-b31b1b.svg)](https://arxiv.org/abs/2602.02468) [![PDF](https://img.shields.io/badge/PDF-Avenir--Web-red.svg)](https://arxiv.org/pdf/2602.02468.pdf) [![Demo](https://img.shields.io/badge/Demo-Mode-blueviolet.svg)](https://www.youtube.com/watch?v=X38CH0xc_sg&t=16s)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE.txt) [![arXiv](https://img.shields.io/badge/arXiv-2602.02468-b31b1b.svg)](https://arxiv.org/abs/2602.02468) [![PDF](https://img.shields.io/badge/PDF-Avenir--Web-red.svg)](https://arxiv.org/pdf/2602.02468.pdf) [![Demo Video](https://img.shields.io/badge/Demo%20Video-YouTube-red.svg)](https://www.youtube.com/watch?v=X38CH0xc_sg&t=16s)
 
 Princeton AI for Accelerating Invention Lab  
 Authors: [Aiden Yiliu Li](https://yiliu.li), [Xinyue Hao](https://www.edinburgh-robotics.org/students/maggie-xinyue-hao), [Shilong Liu](https://lsl.zone), [Mengdi Wang](https://ece.princeton.edu/people/mengdi-wang)

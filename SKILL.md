@@ -14,6 +14,8 @@ Responsibilities:
 - choose mode (`headless` / `headed` / `demo`)
 - improve instruction quality before execution
 - analyze run outputs and recommend the next best change
+- execute one atomic action without strategy/checklist overhead
+- read the current page by screenshoting it and asking the main model a question
 
 Use this skill for requests like:
 - run a task on a website
@@ -25,6 +27,16 @@ Use this skill for requests like:
 Single task:
 ```bash
 python example.py --task "<instruction>" --website "<url>" --mode headless
+```
+
+Atomic action:
+```bash
+python scripts/atomic_action.py --action CLICK --website "<url>" --coords "500,500"
+```
+
+Read page:
+```bash
+python scripts/read_page.py --website "<url>" --question "<question>"
 ```
 
 Batch:
@@ -49,6 +61,22 @@ Batch:
 ```bash
 cd src
 python run_agent.py -c config/batch_experiment.toml
+```
+
+Atomic action:
+```bash
+python scripts/atomic_action.py \
+  --action TYPE \
+  --website "https://example.com/" \
+  --coords "500,420" \
+  --value "hello"
+```
+
+Read page:
+```bash
+python scripts/read_page.py \
+  --website "https://openrouter.ai/" \
+  --question "What models or prices are visible on this page?"
 ```
 
 ## Run modes
@@ -100,6 +128,32 @@ Recommended report fields:
 - evidence summary
 - one-line cause
 - one recommended next step
+
+## Atomic action workflow
+
+Use `scripts/atomic_action.py` when you need exactly one browser operation and do not want strategist/checklist generation.
+
+Typical uses:
+- one click
+- one type
+- one goto
+- one scroll
+
+Properties:
+- disables strategy generation
+- disables checklist generation
+- executes exactly one action
+- returns structured JSON with result, URL, screenshot path, and output directory
+
+## Read-page workflow
+
+Use `scripts/read_page.py` when you want to inspect the current page by screenshot and ask the main model a direct question.
+
+Properties:
+- opens the page
+- captures a screenshot
+- sends the screenshot plus page metadata to the main model
+- returns structured JSON with the answer and screenshot path
 
 ## Batch workflow
 

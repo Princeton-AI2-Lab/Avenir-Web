@@ -86,6 +86,8 @@ class AvenirWebAgent:
                 config["basic"].setdefault("crawler_mode", crawler_mode)
                 config["agent"]["max_auto_op"] = max_auto_op
                 config["agent"]["highlight"] = highlight
+                config["agent"].setdefault("enable_strategy", True)
+                config["agent"].setdefault("enable_checklist", True)
                 config["model"]["name"] = model
                 config["model"]["temperature"] = temperature
                 
@@ -139,6 +141,9 @@ class AvenirWebAgent:
             # Set default mode if not present
             if "mode" not in config["browser"]:
                 config["browser"]["mode"] = "headless"
+            config.setdefault("agent", {})
+            config["agent"].setdefault("enable_strategy", True)
+            config["agent"].setdefault("enable_checklist", True)
 
         except FileNotFoundError:
             logging.getLogger(__name__).error(f"Config file not found: {os.path.abspath(config_path)}")
@@ -319,12 +324,18 @@ class AvenirWebAgent:
         self.skip_task = False
         self.terminated = False
         self.last_action_display = "Waiting..."
+        self.enable_strategy = bool(self.config.get("agent", {}).get("enable_strategy", True))
+        self.enable_checklist = bool(self.config.get("agent", {}).get("enable_checklist", True))
 
     async def _generate_task_strategy(self):
         """
         Generate strategic plan about the task using a strategist model.
         Called at the start of task execution before browser launches.
         """
+        if not self.enable_strategy:
+            self.logger.info("Strategy generation disabled for this run")
+            self.task_strategy = ""
+            return
         model_config = self.config.get('model', {})
         strategist_model = model_config.get('strategist_model', self.model)
         strategist_temp = model_config.get('strategist_temperature', 1.0)
@@ -387,6 +398,11 @@ class AvenirWebAgent:
         
     async def generate_task_checklist(self, task_description):
         """Generate a checklist for the task using the reasoning model."""
+        if not self.enable_checklist:
+            self.logger.info("Checklist generation disabled for this run")
+            self.checklist_generated = False
+            self.checklist_manager.task_checklist = []
+            return []
         result = await self.checklist_manager.generate_task_checklist(task_description)
         self.checklist_generated = self.checklist_manager.checklist_generated
         return result
@@ -1019,7 +1035,7 @@ class AvenirWebAgent:
         else:
             self.logger.info("Browser started without initial navigation. Use GOTO action to navigate to a website.")
 
-        if self.tasks and not self.checklist_generated:
+        if self.enable_checklist and self.tasks and not self.checklist_generated:
             task_description = self.tasks[-1] if isinstance(self.tasks[-1], str) else str(self.tasks[-1])
             self.logger.info(f"Generating checklist for task: {task_description}")
             try:
