@@ -256,18 +256,6 @@ h2 {
   border: 0;
 }
 
-.video-note {
-  margin-top: 12px;
-  color: var(--muted);
-  font-size: 0.95rem;
-  line-height: 1.7;
-}
-
-.video-note a {
-  color: #fff;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.24);
-}
-
 .code-stack {
   display: grid;
   gap: 18px;
