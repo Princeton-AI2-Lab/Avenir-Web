@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Avenir-Web</title>
+    <meta
+      name="description"
+      content="Avenir-Web is an autonomous web agent framework for reliable execution of long-horizon tasks on complex, dynamic web interfaces."
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar" id="top">
+      <a class="brand" href="#top" aria-label="Avenir-Web home">
+        <img class="brand-logo" src="./icon.png" alt="Avenir-Web logo" />
+        <span class="brand-text">Avenir-Web</span>
+      </a>
+      <nav class="nav">
+        <a href="#abstract">Abstract</a>
+        <a href="#video">Video</a>
+        <a href="#method">Method</a>
+        <a href="#runtime">Runtime</a>
+        <a href="#quickstart">Quickstart</a>
+        <a href="#citation">Citation</a>
+      </nav>
+    </header>
+
+    <main class="page">
+      <section class="hero">
+        <div class="hero-mark">
+          <img class="hero-logo" src="./icon.png" alt="Avenir-Web logo" />
+        </div>
+        <p class="eyebrow">Princeton AI for Accelerating Invention Lab</p>
+        <h1>Avenir-Web</h1>
+        <p class="hero-subtitle">
+          Autonomous web agents for reliable long-horizon execution on complex,
+          dynamic interfaces.
+        </p>
+        <p class="authors">
+          <a href="https://yiliu.li">Aiden Yiliu Li</a>
+          <span>&middot;</span>
+          <a href="https://www.edinburgh-robotics.org/students/maggie-xinyue-hao">Xinyue Hao</a>
+          <span>&middot;</span>
+          <a href="https://lsl.zone">Shilong Liu</a>
+          <span>&middot;</span>
+          <a href="https://ece.princeton.edu/people/mengdi-wang">Mengdi Wang</a>
+        </p>
+        <div class="hero-links">
+          <a href="https://github.com/Princeton-AI2-Lab/Avenir-Web">GitHub</a>
+          <a href="https://arxiv.org/abs/2602.02468">arXiv</a>
+          <a href="https://arxiv.org/pdf/2602.02468.pdf">PDF</a>
+          <a href="https://www.youtube.com/watch?v=X38CH0xc_sg&t=24s">Demo</a>
+          <a href="./LICENSE.txt">License</a>
+        </div>
+      </section>
+
+      <section class="section" id="abstract">
+        <div class="section-head">
+          <p class="eyebrow">Abstract</p>
+          <h2>Research Overview</h2>
+        </div>
+        <div class="text-block">
+          <p>
+            Avenir-Web is an autonomous web agent framework designed for reliable
+            execution of long-horizon tasks on complex, dynamic web interfaces.
+            Addressing challenges in element grounding and long-term task tracking,
+            it introduces a modular architecture combining Mixture of Grounding
+            Experts (MoGE), Experience-Imitation Planning (EIP), and Adaptive
+            Memory with Task-Tracking Checklists. This approach establishes a new
+            open-source state-of-the-art on the Online-Mind2Web benchmark,
+            bridging the performance gap with proprietary models in real-world
+            deployments.
+          </p>
+        </div>
+      </section>
+
+      <section class="section" id="method">
+        <div class="section-head">
+          <p class="eyebrow">Method</p>
+          <h2>Core Components</h2>
+        </div>
+        <div class="simple-list">
+          <article class="simple-item">
+            <span class="index">01</span>
+            <h3>Mixture of Grounding Experts</h3>
+            <p>
+              Grounding combines screenshot understanding and browser state to
+              produce actionable clicks, types, selections, and navigation steps.
+            </p>
+          </article>
+          <article class="simple-item">
+            <span class="index">02</span>
+            <h3>Experience-Imitation Planning</h3>
+            <p>
+              Planning pushes the agent beyond one-step reactivity by generating
+              higher-level task structure before detailed action selection.
+            </p>
+          </article>
+          <article class="simple-item">
+            <span class="index">03</span>
+            <h3>Adaptive Memory</h3>
+            <p>
+              Memory stores evolving task context across long web trajectories,
+              preserving intermediate findings and execution state.
+            </p>
+          </article>
+          <article class="simple-item">
+            <span class="index">04</span>
+            <h3>Task-Tracking Checklists</h3>
+            <p>
+              Checklist-based tracking makes progress explicit, records partial completion,
+              and keeps the agent aligned with remaining subgoals.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="video">
+        <div class="section-head">
+          <p class="eyebrow">Video</p>
+          <h2>Project Demo</h2>
+        </div>
+        <div class="video-panel">
+          <div class="video-frame">
+            <iframe
+              src="https://www.youtube-nocookie.com/embed/X38CH0xc_sg?start=24&rel=0"
+              title="Avenir-Web Demo Video"
+              loading="lazy"
+              referrerpolicy="strict-origin-when-cross-origin"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowfullscreen
+            ></iframe>
+          </div>
+          <p class="video-note">
+            If the player does not load when opened locally, serve this page over HTTP and open
+            <a href="https://www.youtube.com/watch?v=X38CH0xc_sg&t=24s">YouTube</a>.
+          </p>
+        </div>
+      </section>
+
+      <section class="section" id="runtime">
+        <div class="section-head">
+          <p class="eyebrow">Runtime</p>
+          <h2>Execution Modes</h2>
+        </div>
+        <div class="simple-list">
+          <article class="simple-item">
+            <h3>Headless</h3>
+            <p>Best for reproducible experiments, batch evaluation, and long-run execution.</p>
+          </article>
+          <article class="simple-item">
+            <h3>Headed</h3>
+            <p>Best when browser visibility matters but presentation overlays are unnecessary.</p>
+          </article>
+          <article class="simple-item">
+            <h3>Demo Mode</h3>
+            <p>
+              Synchronized dashboard state, visible cursor feedback, and task progression
+              designed for talks, videos, and analysis.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="quickstart">
+        <div class="section-head">
+          <p class="eyebrow">Quickstart</p>
+          <h2>Installation and Execution</h2>
+        </div>
+        <div class="code-stack">
+          <article class="code-card">
+            <h3>Install</h3>
+            <div class="copy-block">
+              <button class="copy-button" type="button">Copy</button>
+              <pre><code>conda create -n avenir-web python=3.11
+conda activate avenir-web
+pip install -e src
+python -m playwright install chromium</code></pre>
+            </div>
+          </article>
+          <article class="code-card">
+            <h3>API Key</h3>
+            <div class="copy-block">
+              <button class="copy-button" type="button">Copy</button>
+              <pre><code>export OPENROUTER_API_KEY="your-key"</code></pre>
+            </div>
+          </article>
+          <article class="code-card">
+            <h3>Single Task</h3>
+            <div class="copy-block">
+              <button class="copy-button" type="button">Copy</button>
+              <pre><code>python example.py \
+  --task "Find the official API docs for X" \
+  --website "https://example.com/" \
+  --mode headless</code></pre>
+            </div>
+          </article>
+          <article class="code-card">
+            <h3>Batch Run</h3>
+            <div class="copy-block">
+              <button class="copy-button" type="button">Copy</button>
+              <pre><code>cd src
+python run_agent.py -c config/batch_experiment.toml</code></pre>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="section citation-section" id="citation">
+        <div class="section-head">
+          <p class="eyebrow">Citation</p>
+          <h2>BibTeX</h2>
+        </div>
+        <div class="citation-block">
+          <div class="copy-block">
+            <button class="copy-button" type="button">Copy</button>
+            <pre><code>@misc{li2026avenirwebhumanexperienceimitatingmultimodalweb,
+  title={Avenir-Web: Human-Experience-Imitating Multimodal Web Agents with Mixture of Grounding Experts},
+  author={Aiden Yiliu Li and Xinyue Hao and Shilong Liu and Mengdi Wang},
+  year={2026},
+  eprint={2602.02468},
+  archivePrefix={arXiv},
+  primaryClass={cs.AI},
+  url={https://arxiv.org/abs/2602.02468},
+}</code></pre>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script>
+      if ("scrollRestoration" in history) {
+        history.scrollRestoration = "manual";
+      }
+
+      window.addEventListener("load", () => {
+        window.scrollTo(0, 0);
+      });
+
+      const copyButtons = document.querySelectorAll(".copy-button");
+      copyButtons.forEach((button) => {
+        button.addEventListener("click", async () => {
+          const code = button.parentElement.querySelector("code");
+          if (!code) return;
+          try {
+            await navigator.clipboard.writeText(code.textContent);
+            const previous = button.textContent;
+            button.textContent = "Copied";
+            window.setTimeout(() => {
+              button.textContent = previous;
+            }, 1200);
+          } catch {
+            button.textContent = "Failed";
+            window.setTimeout(() => {
+              button.textContent = "Copy";
+            }, 1200);
+          }
+        });
+      });
+    </script>
+  </body>
+</html>
